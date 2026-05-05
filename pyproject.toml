@@ -115,4 +115,8 @@ exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
+    # Protocol method bodies are pure type signatures — they exist as `...`
+    # placeholders and are never executed at runtime. Excluding them lets
+    # coverage reflect what is genuinely tested without padding around it.
+    "^\\s*\\.\\.\\.\\s*$",
 ]
