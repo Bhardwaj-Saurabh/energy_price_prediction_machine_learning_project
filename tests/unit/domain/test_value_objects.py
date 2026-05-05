@@ -20,6 +20,7 @@ from energy_forecaster.domain.value_objects.horizon import (
     HorizonHours,
 )
 from energy_forecaster.domain.value_objects.mape import MAPE
+from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from energy_forecaster.domain.value_objects.price import (
     MAX_PLAUSIBLE_PRICE_EUR,
     MIN_PLAUSIBLE_PRICE_EUR,
@@ -189,3 +190,38 @@ class TestMAPE:
         m = MAPE(0.05)
         with pytest.raises(AttributeError):
             m.value = 0.10  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# ModelVersion
+# ---------------------------------------------------------------------------
+
+
+class TestModelVersion:
+    def test_typical_value_constructs(self) -> None:
+        assert ModelVersion("demand_de_lu/12").value == "demand_de_lu/12"
+
+    def test_empty_string_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            ModelVersion("")
+
+    def test_non_string_is_rejected(self) -> None:
+        with pytest.raises(TypeError, match="must be str"):
+            ModelVersion(12)  # type: ignore[arg-type]
+
+    def test_equality_is_by_value(self) -> None:
+        assert ModelVersion("a/1") == ModelVersion("a/1")
+        assert ModelVersion("a/1") != ModelVersion("a/2")
+
+    def test_is_hashable(self) -> None:
+        # ModelVersion is used as a dict key / set member in the registry
+        # adapter — equality and hashing must agree.
+        assert {ModelVersion("a/1"), ModelVersion("a/1"), ModelVersion("a/2")} == {
+            ModelVersion("a/1"),
+            ModelVersion("a/2"),
+        }
+
+    def test_is_immutable(self) -> None:
+        mv = ModelVersion("a/1")
+        with pytest.raises(AttributeError):
+            mv.value = "a/2"  # type: ignore[misc]

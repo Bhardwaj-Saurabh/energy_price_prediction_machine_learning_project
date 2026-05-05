@@ -1,9 +1,10 @@
 """An hourly weather measurement at a representative point in a bidding zone."""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from math import isfinite
 
+from energy_forecaster.domain._validation import require_utc
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 
 # Physical plausibility bounds. These exist to reject obvious data corruption
@@ -47,15 +48,7 @@ class WeatherReading:
     precip_mm: float
 
     def __post_init__(self) -> None:
-        if self.timestamp_utc.tzinfo is None:
-            raise ValueError(
-                "WeatherReading.timestamp_utc must be timezone-aware, got a naive datetime"
-            )
-        if self.timestamp_utc.utcoffset() != timedelta(0):
-            raise ValueError(
-                f"WeatherReading.timestamp_utc must be UTC (offset 0), "
-                f"got offset {self.timestamp_utc.utcoffset()}"
-            )
+        require_utc("WeatherReading.timestamp_utc", self.timestamp_utc)
 
         self._check("temp_c", self.temp_c, MIN_TEMP_C, MAX_TEMP_C)
         self._check("wind_10m_ms", self.wind_10m_ms, MIN_WIND_MS, MAX_WIND_MS)

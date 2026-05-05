@@ -1,8 +1,9 @@
 """A measured electrical load at a point in time, for a bidding zone."""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
+from energy_forecaster.domain._validation import require_utc
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 from energy_forecaster.domain.value_objects.energy import EnergyMW
 
@@ -15,10 +16,6 @@ class LoadObservation:
     same identity are considered the same observation regardless of which
     upstream source provided them. This is how downstream pipelines
     deduplicate readings from primary and replay feeds.
-
-    All timestamps must be timezone-aware and expressed in UTC. Naive
-    datetimes are the single largest source of bugs in time-series ML, so
-    they are rejected at this boundary instead of being silently coerced.
     """
 
     zone: BiddingZone
@@ -26,12 +23,4 @@ class LoadObservation:
     load: EnergyMW
 
     def __post_init__(self) -> None:
-        if self.timestamp_utc.tzinfo is None:
-            raise ValueError(
-                "LoadObservation.timestamp_utc must be timezone-aware, got a naive datetime"
-            )
-        if self.timestamp_utc.utcoffset() != timedelta(0):
-            raise ValueError(
-                f"LoadObservation.timestamp_utc must be UTC (offset 0), "
-                f"got offset {self.timestamp_utc.utcoffset()}"
-            )
+        require_utc("LoadObservation.timestamp_utc", self.timestamp_utc)
