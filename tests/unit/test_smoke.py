@@ -4,12 +4,9 @@ If this fails, the project is not installed correctly — fix the install
 before debugging anything else.
 """
 
-import pytest
-
 import energy_forecaster
 
 
-@pytest.mark.unit
 def test_package_version_is_a_string() -> None:
     assert isinstance(energy_forecaster.__version__, str)
     assert energy_forecaster.__version__ != ""
