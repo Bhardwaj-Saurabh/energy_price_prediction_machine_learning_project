@@ -20,6 +20,7 @@ adapters added in later phases.
 
 ```bash
 make install     # create locked .venv with dev tools
+cp .env.example .env   # local config — fill in secrets as features arrive
 make test        # run pytest with >=80% coverage gate
 make lint        # ruff lint + format check
 make typecheck   # mypy --strict over src/ and tests/
@@ -28,6 +29,15 @@ make help        # list all targets
 ```
 
 A green `make check` is the bar for "ready to merge".
+
+## Configuration
+
+Runtime config is loaded from environment variables prefixed `EF_` and an
+optional `.env` file in the working directory (env vars win). The full set of
+keys, their defaults, and what they do live in
+[`.env.example`](.env.example) and the docstring of
+[`src/energy_forecaster/config/settings.py`](src/energy_forecaster/config/settings.py).
+`.env` is gitignored — never commit secrets.
 
 ## Project layout
 

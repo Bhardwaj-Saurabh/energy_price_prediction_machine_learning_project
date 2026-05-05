@@ -13,7 +13,14 @@ classifiers = [
     "Operating System :: POSIX",
     "Operating System :: MacOS",
 ]
-dependencies = []
+# Production runtime dependencies. Each entry must be justified by code that
+# actually uses it — the rulebook forbids premature scaffolding.
+#   pydantic / pydantic-settings : typed, validated env-var-driven config
+#                                   (replaces ad-hoc os.environ access).
+dependencies = [
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+]
 
 # PEP 735 dependency groups — installed by `uv sync`, excluded from production wheels.
 # We start with only the developer tooling. Domain libraries (pandas, kedro,
