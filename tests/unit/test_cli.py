@@ -18,13 +18,21 @@ from energy_forecaster.config.settings import get_settings
 
 @pytest.fixture(autouse=True)
 def _isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Pin the data root and clear other EF_ vars for deterministic runs."""
+    """Pin the data root and neutralise the developer's local ``.env``.
+
+    We can't easily disable .env loading from the CLI path (Settings
+    reads the file in its config), so we override every key the file
+    might define. ``EF_ENTSOE_API_KEY=""`` is critical: without it, a
+    developer's real API key from .env would leak into tests and the
+    composition root would pick the live adapter.
+    """
     import os
 
     for key in list(os.environ):
         if key.upper().startswith("EF_"):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("EF_LOCAL_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("EF_ENTSOE_API_KEY", "")
     get_settings.cache_clear()
 
 

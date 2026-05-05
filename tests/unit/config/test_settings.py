@@ -96,6 +96,18 @@ class TestSecretMasking:
         assert s.entsoe_api_key is not None
         assert s.entsoe_api_key.get_secret_value() == "very-secret-token"
 
+    def test_empty_string_resolves_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Common ``.env.example`` pattern: ``EF_ENTSOE_API_KEY=`` (no
+        # value, signalling "I have not set this"). The Settings layer
+        # coerces this to None so the composition root never sees an
+        # empty SecretStr it would treat as "configured".
+        monkeypatch.setenv("EF_ENTSOE_API_KEY", "")
+        assert _settings_no_env_file().entsoe_api_key is None
+
+    def test_whitespace_only_string_resolves_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EF_ENTSOE_API_KEY", "   ")
+        assert _settings_no_env_file().entsoe_api_key is None
+
     def test_secret_value_is_masked_in_repr(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # SecretStr is the only thing that prevents accidental logging of
         # credentials — confirm that converting Settings to its string

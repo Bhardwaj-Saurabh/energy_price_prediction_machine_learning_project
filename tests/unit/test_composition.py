@@ -9,7 +9,10 @@ directly.
 
 from pathlib import Path
 
+from pydantic import SecretStr
+
 from energy_forecaster.adapters.clock.system_clock import SystemClock
+from energy_forecaster.adapters.entsoe_client.entsoe_py import EntsoePyClient
 from energy_forecaster.adapters.entsoe_client.in_memory import InMemoryEntsoeClient
 from energy_forecaster.adapters.load_observation_repo.local_fs import (
     LocalFsLoadObservationRepository,
@@ -31,9 +34,7 @@ def test_build_ingest_entsoe_load_returns_a_use_case(tmp_path: Path) -> None:
     assert isinstance(use_case, IngestEntsoeLoad)
 
 
-def test_built_use_case_uses_in_memory_entsoe_local_fs_repo_system_clock(
-    tmp_path: Path,
-) -> None:
+def test_no_api_key_picks_in_memory_entsoe(tmp_path: Path) -> None:
     # Reach into the use case's private fields to confirm wiring. This is
     # the one place where peeking at internals is acceptable — the whole
     # job of this test is to verify the wiring contract that no other test
@@ -42,8 +43,22 @@ def test_built_use_case_uses_in_memory_entsoe_local_fs_repo_system_clock(
         _env_file=None,  # type: ignore[call-arg]
         environment=Environment.LOCAL,
         local_data_root=tmp_path,
+        entsoe_api_key=None,
     )
     use_case = build_ingest_entsoe_load(settings)
     assert isinstance(use_case._entsoe, InMemoryEntsoeClient)
     assert isinstance(use_case._repo, LocalFsLoadObservationRepository)
     assert isinstance(use_case._clock, SystemClock)
+
+
+def test_api_key_present_picks_real_entsoe_py_client(tmp_path: Path) -> None:
+    # The real adapter's constructor stores the key only — no network
+    # call — so it is safe to instantiate with a placeholder.
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        environment=Environment.LOCAL,
+        local_data_root=tmp_path,
+        entsoe_api_key=SecretStr("placeholder-not-real"),
+    )
+    use_case = build_ingest_entsoe_load(settings)
+    assert isinstance(use_case._entsoe, EntsoePyClient)

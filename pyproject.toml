@@ -20,6 +20,11 @@ classifiers = [
 dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
+    # entsoe-py — Python wrapper over the ENTSO-E Transparency Platform XML API.
+    # Brings pandas as a transitive dep; we declare pandas explicitly below
+    # because the EntsoePyClient adapter uses pd.Timestamp / pd.isna directly.
+    "entsoe-py>=0.6.0",
+    "pandas>=2.2.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -91,6 +96,14 @@ no_implicit_reexport = true
 show_error_codes = true
 pretty = true
 
+# Third-party libraries without public type stubs. Their imports are
+# confined to adapter modules per the dependency rule, so the loss of type
+# safety stays at the boundary. We can revisit (e.g. add pandas-stubs) if
+# adapter complexity grows.
+[[tool.mypy.overrides]]
+module = ["entsoe", "entsoe.*", "pandas", "pandas.*"]
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # Pytest — coverage gate matches the rulebook's >80% target.
 # ---------------------------------------------------------------------------
@@ -104,11 +117,16 @@ addopts = [
     "--cov=energy_forecaster",
     "--cov-report=term-missing",
     "--cov-fail-under=80",
+    # Live tests (real network, real credentials) are opt-in. CI and local
+    # `make test` skip them; run them deliberately via `make test-live`.
+    "-m",
+    "not live",
 ]
 markers = [
     "unit: pure unit tests, no I/O",
     "integration: tests that touch external services or containers",
     "e2e: end-to-end pipeline tests",
+    "live: hits live external APIs (requires network and credentials; opt-in)",
 ]
 
 [tool.coverage.run]

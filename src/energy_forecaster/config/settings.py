@@ -22,7 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +80,21 @@ class Settings(BaseSettings):
     # running in environments that need it; the absence is a configuration
     # error, not a domain error.
     entsoe_api_key: SecretStr | None = None
+
+    @field_validator("entsoe_api_key", mode="before")
+    @classmethod
+    def _blank_string_is_unset(cls, value: object) -> object:
+        """Treat empty / whitespace-only strings as 'not configured'.
+
+        A user who copies ``.env.example`` will get placeholder lines like
+        ``EF_ENTSOE_API_KEY=`` (no value). The intent is clearly "I have
+        not set this", not "the key is the empty string". Without this
+        coercion the composition root would pick the real ENTSO-E adapter
+        and fire a request with an empty token, which fails confusingly.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     model_config = SettingsConfigDict(
         env_prefix="EF_",
