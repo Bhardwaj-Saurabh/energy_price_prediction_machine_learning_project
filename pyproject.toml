@@ -22,6 +22,11 @@ dependencies = [
     "pydantic-settings>=2.6.0",
 ]
 
+# Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
+# entrypoint at energy_forecaster/cli.py:main.
+[project.scripts]
+energy-forecaster = "energy_forecaster.cli:main"
+
 # PEP 735 dependency groups — installed by `uv sync`, excluded from production wheels.
 # We start with only the developer tooling. Domain libraries (pandas, kedro,
 # mlflow, feast, fastapi, …) are added in later chunks as we actually use them —
@@ -109,6 +114,10 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["src/energy_forecaster"]
+# __main__.py is a four-line launch shim that only executes when the
+# package is invoked via ``python -m energy_forecaster``. Tests cover the
+# CLI logic via cli.main() directly; the shim has no business logic.
+omit = ["src/energy_forecaster/__main__.py"]
 
 [tool.coverage.report]
 exclude_lines = [
