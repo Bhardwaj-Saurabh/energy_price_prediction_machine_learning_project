@@ -6,6 +6,7 @@ The dependency rule says nothing in this package may import from
 Domain code expresses *what* the business is; everything else is *how*.
 """
 
+from energy_forecaster.domain._validation import require_utc
 from energy_forecaster.domain.entities.load_forecast import LoadForecast
 from energy_forecaster.domain.entities.load_observation import LoadObservation
 from energy_forecaster.domain.entities.price_forecast import PriceForecast
@@ -33,5 +34,6 @@ __all__ = [
     "PriceEUR",
     "PriceForecast",
     "WeatherReading",
+    "require_utc",
     "should_promote",
 ]

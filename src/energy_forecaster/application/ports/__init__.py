@@ -1,0 +1,15 @@
+"""Application ports — Protocol interfaces for every external dependency.
+
+Anything the application layer reaches outside itself for (the wall clock,
+external APIs, persistence) is reached through a port defined here. The
+production adapter and the test fake both implement the same Protocol;
+the use case sees only the Protocol and never the concrete type.
+"""
+
+from energy_forecaster.application.ports.clock import Clock
+from energy_forecaster.application.ports.entsoe_client import EntsoeClient
+from energy_forecaster.application.ports.load_observation_repository import (
+    LoadObservationRepository,
+)
+
+__all__ = ["Clock", "EntsoeClient", "LoadObservationRepository"]
