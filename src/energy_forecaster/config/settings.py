@@ -45,6 +45,14 @@ class Environment(StrEnum):
 # treated as the WARNING fallback.
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
+# Where weather data comes from. ``synthetic`` runs against the
+# in-memory adapter (deterministic, no network — useful for demos, CI,
+# and offline development). ``open_meteo`` hits the real, keyless
+# Open-Meteo API. ENTSO-E uses ``entsoe_api_key`` presence as its
+# discriminator because no key means no real call is possible; weather
+# has no such constraint, so the choice is exposed explicitly here.
+WeatherSource = Literal["synthetic", "open_meteo"]
+
 
 class Settings(BaseSettings):
     """Typed, validated runtime configuration for the Energy Forecaster.
@@ -80,6 +88,8 @@ class Settings(BaseSettings):
     # running in environments that need it; the absence is a configuration
     # error, not a domain error.
     entsoe_api_key: SecretStr | None = None
+
+    weather_source: WeatherSource = "synthetic"
 
     @field_validator("entsoe_api_key", mode="before")
     @classmethod

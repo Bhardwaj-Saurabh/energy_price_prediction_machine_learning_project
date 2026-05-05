@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 from energy_forecaster.application.errors import DataSourceUnavailableError
 from energy_forecaster.domain.entities.load_observation import LoadObservation
+from energy_forecaster.domain.entities.weather_reading import WeatherReading
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 
 
@@ -90,4 +91,53 @@ class FakeLoadObservationRepository:
 
     def all(self) -> list[LoadObservation]:
         """Test-only helper: dump every stored observation for assertions."""
+        return list(self._store.values())
+
+
+class FakeWeatherClient:
+    """Predetermined-data weather stand-in.
+
+    Same shape as :class:`FakeEntsoeClient` — ``seed`` loads readings,
+    ``fail_on`` flips a zone into raising :class:`DataSourceUnavailableError`,
+    ``fetch_weather`` returns the half-open window subset.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[BiddingZone, list[WeatherReading]] = {}
+        self._fail_on_zone: BiddingZone | None = None
+
+    def seed(self, zone: BiddingZone, readings: Iterable[WeatherReading]) -> None:
+        self._data[zone] = list(readings)
+
+    def fail_on(self, zone: BiddingZone) -> None:
+        self._fail_on_zone = zone
+
+    def fetch_weather(
+        self,
+        *,
+        zone: BiddingZone,
+        start: datetime,
+        end: datetime,
+    ) -> Iterable[WeatherReading]:
+        if zone == self._fail_on_zone:
+            raise DataSourceUnavailableError(f"Open-Meteo unavailable for {zone}")
+        return [r for r in self._data.get(zone, []) if start <= r.timestamp_utc < end]
+
+
+class FakeWeatherReadingRepository:
+    """In-memory weather repo with the same dedup contract as production."""
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[BiddingZone, datetime], WeatherReading] = {}
+
+    def add_many(self, readings: Iterable[WeatherReading]) -> int:
+        new_count = 0
+        for r in readings:
+            key = (r.zone, r.timestamp_utc)
+            if key not in self._store:
+                self._store[key] = r
+                new_count += 1
+        return new_count
+
+    def all(self) -> list[WeatherReading]:
         return list(self._store.values())

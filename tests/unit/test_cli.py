@@ -33,6 +33,9 @@ def _isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("EF_LOCAL_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("EF_ENTSOE_API_KEY", "")
+    # Default weather source for CLI tests is the deterministic synthetic
+    # adapter — no network surprises in CI.
+    monkeypatch.setenv("EF_WEATHER_SOURCE", "synthetic")
     get_settings.cache_clear()
 
 
@@ -223,6 +226,83 @@ class TestIngestEndToEnd:
         captured = capsys.readouterr()
         # Last printed output is the second run; assert the zero-insert.
         assert "Observations inserted: 0" in captured.out
+
+
+class TestWeatherSubcommand:
+    def test_weather_command_runs_end_to_end(
+        self, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        exit_code = main(
+            [
+                "weather",
+                "--zone",
+                "DE_LU",
+                "--start",
+                "2026-05-04",
+                "--end",
+                "2026-05-05",
+            ]
+        )
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Weather ingest complete" in captured.out
+        assert "Readings fetched:   24" in captured.out
+        assert "Readings inserted:  24" in captured.out
+
+        jsonl = tmp_path / "weather_readings" / "DE_LU.jsonl"
+        assert jsonl.exists()
+        assert len(jsonl.read_text().splitlines()) == 24
+
+    def test_weather_command_dedups_on_rerun(
+        self, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        for _ in range(2):
+            assert (
+                main(
+                    [
+                        "weather",
+                        "--zone",
+                        "DE_LU",
+                        "--start",
+                        "2026-05-04",
+                        "--end",
+                        "2026-05-05",
+                    ]
+                )
+                == 0
+            )
+        captured = capsys.readouterr()
+        assert "Readings inserted:  0" in captured.out
+
+    def test_weather_command_propagates_application_error_as_exit_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from energy_forecaster.application.errors import DataSourceUnavailableError
+
+        class _FailingUseCase:
+            def execute(self, **kwargs: object) -> None:
+                raise DataSourceUnavailableError("simulated weather outage")
+
+        monkeypatch.setattr(
+            "energy_forecaster.cli.build_ingest_weather",
+            lambda settings: _FailingUseCase(),
+        )
+
+        exit_code = main(
+            [
+                "weather",
+                "--zone",
+                "DE_LU",
+                "--start",
+                "2026-05-04",
+                "--end",
+                "2026-05-05",
+            ]
+        )
+        assert exit_code == 1
+        assert "simulated weather outage" in capsys.readouterr().err
 
 
 class TestTimestampParsing:

@@ -22,7 +22,13 @@ from energy_forecaster.application.errors import ApplicationError
 from energy_forecaster.application.use_cases.ingest_entsoe_load import (
     IngestEntsoeLoadResult,
 )
-from energy_forecaster.composition import build_ingest_entsoe_load
+from energy_forecaster.application.use_cases.ingest_weather import (
+    IngestWeatherResult,
+)
+from energy_forecaster.composition import (
+    build_ingest_entsoe_load,
+    build_ingest_weather,
+)
 from energy_forecaster.config.settings import get_settings
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 
@@ -34,6 +40,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "ingest":
         return _run_ingest(args)
+    if args.command == "weather":
+        return _run_weather(args)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -57,41 +65,54 @@ def _build_parser() -> argparse.ArgumentParser:
             "observations were fetched and persisted."
         ),
     )
-    ingest.add_argument(
+    _add_zone_window_args(ingest)
+
+    weather = subparsers.add_parser(
+        "weather",
+        help="Fetch hourly weather readings for one or more zones over a window.",
+        description=(
+            "Run the IngestWeather use case against the configured weather "
+            "adapter (synthetic by default; set EF_WEATHER_SOURCE=open_meteo "
+            "to hit the real Open-Meteo API)."
+        ),
+    )
+    _add_zone_window_args(weather)
+
+    return parser
+
+
+def _add_zone_window_args(sub: argparse.ArgumentParser) -> None:
+    """Shared --zone/--start/--end flags for every ingest-style command."""
+    sub.add_argument(
         "--zone",
         action="append",
         required=True,
         choices=[z.value for z in BiddingZone],
         help="Bidding zone (repeatable). Example: --zone DE_LU --zone FR",
     )
-    ingest.add_argument(
+    sub.add_argument(
         "--start",
         required=True,
         type=_parse_timestamp,
         help=(
-            "Start of the ingest window. Either a bare date "
+            "Start of the window. Either a bare date "
             "('2026-05-04', interpreted as midnight UTC) or a full ISO "
             "timestamp with an offset ('2026-05-04T12:00:00+00:00'). "
             "Naked datetimes without a timezone are rejected — they are "
             "ambiguous."
         ),
     )
-    ingest.add_argument(
+    sub.add_argument(
         "--end",
         required=True,
         type=_parse_timestamp,
-        help="End of the ingest window (exclusive). Same format rules as --start.",
+        help="End of the window (exclusive). Same format rules as --start.",
     )
-
-    return parser
 
 
 def _parse_timestamp(raw: str) -> datetime:
     """Argparse type converter. Accepts ISO date or full UTC timestamp."""
     if "T" not in raw:
-        # Bare date: interpret as midnight UTC. ``date.fromisoformat`` is
-        # stricter than ``datetime.fromisoformat`` and only accepts the
-        # YYYY-MM-DD form, which is exactly what we want for this branch.
         try:
             d = datetime.fromisoformat(raw).date()
         except ValueError as exc:
@@ -122,11 +143,26 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    _print_result(result)
+    _print_load_result(result)
     return 0
 
 
-def _print_result(result: IngestEntsoeLoadResult) -> None:
+def _run_weather(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    use_case = build_ingest_weather(settings)
+    zones = [BiddingZone(z) for z in args.zone]
+
+    try:
+        result = use_case.execute(zones=zones, start=args.start, end=args.end)
+    except ApplicationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    _print_weather_result(result)
+    return 0
+
+
+def _print_load_result(result: IngestEntsoeLoadResult) -> None:
     print("Ingest complete:")
     print(f"  Zones processed:       {result.zones_processed}")
     print(f"  Observations fetched:  {result.observations_fetched}")
@@ -134,3 +170,13 @@ def _print_result(result: IngestEntsoeLoadResult) -> None:
     print(f"  Started at:            {result.started_at.isoformat()}")
     print(f"  Finished at:           {result.finished_at.isoformat()}")
     print(f"  Duration:              {result.duration_seconds:.3f} s")
+
+
+def _print_weather_result(result: IngestWeatherResult) -> None:
+    print("Weather ingest complete:")
+    print(f"  Zones processed:    {result.zones_processed}")
+    print(f"  Readings fetched:   {result.readings_fetched}")
+    print(f"  Readings inserted:  {result.readings_inserted}")
+    print(f"  Started at:         {result.started_at.isoformat()}")
+    print(f"  Finished at:        {result.finished_at.isoformat()}")
+    print(f"  Duration:           {result.duration_seconds:.3f} s")

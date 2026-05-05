@@ -25,6 +25,10 @@ dependencies = [
     # because the EntsoePyClient adapter uses pd.Timestamp / pd.isna directly.
     "entsoe-py>=0.6.0",
     "pandas>=2.2.0",
+    # requests — keyless HTTP client used by OpenMeteoClient. Transitively
+    # installed by entsoe-py too, but declared explicitly so a future
+    # entsoe replacement does not silently strip it.
+    "requests>=2.32.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -102,6 +106,13 @@ pretty = true
 # adapter complexity grows.
 [[tool.mypy.overrides]]
 module = ["entsoe", "entsoe.*", "pandas", "pandas.*"]
+ignore_missing_imports = true
+
+# requests has type hints since 2.32, but the stub for non-default keyword
+# argument shapes (e.g. timeouts as float | tuple) trips mypy strict in
+# corner cases. We tolerate untyped imports at the adapter boundary only.
+[[tool.mypy.overrides]]
+module = ["requests", "requests.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

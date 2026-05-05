@@ -11,5 +11,15 @@ from energy_forecaster.application.ports.entsoe_client import EntsoeClient
 from energy_forecaster.application.ports.load_observation_repository import (
     LoadObservationRepository,
 )
+from energy_forecaster.application.ports.weather_client import WeatherClient
+from energy_forecaster.application.ports.weather_reading_repository import (
+    WeatherReadingRepository,
+)
 
-__all__ = ["Clock", "EntsoeClient", "LoadObservationRepository"]
+__all__ = [
+    "Clock",
+    "EntsoeClient",
+    "LoadObservationRepository",
+    "WeatherClient",
+    "WeatherReadingRepository",
+]
