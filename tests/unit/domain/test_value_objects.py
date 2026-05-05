@@ -19,6 +19,7 @@ from energy_forecaster.domain.value_objects.horizon import (
     MIN_HORIZON_HOURS,
     HorizonHours,
 )
+from energy_forecaster.domain.value_objects.mape import MAPE
 from energy_forecaster.domain.value_objects.price import (
     MAX_PLAUSIBLE_PRICE_EUR,
     MIN_PLAUSIBLE_PRICE_EUR,
@@ -146,3 +147,45 @@ class TestHorizonHours:
         # mypy considers bool a valid int here, so no type-ignore is required.
         with pytest.raises(TypeError, match="must be int"):
             HorizonHours(True)
+
+
+# ---------------------------------------------------------------------------
+# MAPE
+# ---------------------------------------------------------------------------
+
+
+class TestMAPE:
+    def test_typical_value_constructs(self) -> None:
+        assert MAPE(0.05).value == 0.05
+
+    def test_zero_is_valid(self) -> None:
+        assert MAPE(0.0).value == 0.0
+
+    def test_above_one_is_valid(self) -> None:
+        # A broken model is still a measurable model — do not cap diagnostics.
+        assert MAPE(1.5).value == 1.5
+
+    def test_negative_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-negative"):
+            MAPE(-0.001)
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_non_finite_is_rejected(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="finite"):
+            MAPE(bad)
+
+    def test_supports_ordering_for_promotion_rule(self) -> None:
+        # The champion/challenger promotion rule needs `<`, `<=`, `>`, `>=`.
+        assert MAPE(0.04) < MAPE(0.05)
+        assert MAPE(0.05) <= MAPE(0.05)
+        assert MAPE(0.06) > MAPE(0.05)
+        assert MAPE(0.05) >= MAPE(0.05)
+
+    def test_equality_is_by_value(self) -> None:
+        assert MAPE(0.05) == MAPE(0.05)
+        assert MAPE(0.05) != MAPE(0.06)
+
+    def test_is_immutable(self) -> None:
+        m = MAPE(0.05)
+        with pytest.raises(AttributeError):
+            m.value = 0.10  # type: ignore[misc]
