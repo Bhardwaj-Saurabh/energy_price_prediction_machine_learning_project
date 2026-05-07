@@ -34,3 +34,14 @@ class ModelRegistry(Protocol):
         adapter's choice; downstream code treats the value as opaque.
         """
         ...
+
+    def load(self, version: ModelVersion) -> Any:
+        """Retrieve a previously registered model artifact.
+
+        The returned object satisfies whatever interface the consumer
+        expects (e.g. ``.predict(X)`` for LightGBM). The application
+        layer does not type-narrow it — that is the caller's
+        responsibility, and it stays an implementation detail of the
+        chosen adapter / model flavour.
+        """
+        ...

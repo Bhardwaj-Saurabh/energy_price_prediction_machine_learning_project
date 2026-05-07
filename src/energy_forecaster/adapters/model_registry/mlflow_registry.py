@@ -59,3 +59,23 @@ class MLflowModelRegistry:
         # could later resolve it to MLflow's incrementing version number
         # via the Model Registry API if a consumer needs it.
         return ModelVersion(f"{registered_name}@{run_id}")
+
+    def load(self, version: ModelVersion) -> Any:
+        """Load a previously registered LightGBM model from MLflow.
+
+        Splits the ``ModelVersion`` value (which we wrote as
+        ``<registered_name>@<run_id>`` in :meth:`register`) and asks
+        MLflow for the artifact under ``runs:/<run_id>/model``. The
+        returned object is a ``lightgbm.Booster`` ready for
+        ``.predict(X)``.
+        """
+        mlflow.set_tracking_uri(self._tracking_uri)
+        try:
+            _, run_id = version.value.split("@", 1)
+        except ValueError as exc:
+            raise ValueError(
+                f"ModelVersion {version.value!r} is not in "
+                f"'<registered_name>@<run_id>' form expected by "
+                f"MLflowModelRegistry"
+            ) from exc
+        return mlflow.lightgbm.load_model(f"runs:/{run_id}/model")

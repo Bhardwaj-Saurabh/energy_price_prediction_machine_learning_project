@@ -15,6 +15,9 @@ from pydantic import SecretStr
 from energy_forecaster.adapters.clock.system_clock import SystemClock
 from energy_forecaster.adapters.entsoe_client.entsoe_py import EntsoePyClient
 from energy_forecaster.adapters.entsoe_client.in_memory import InMemoryEntsoeClient
+from energy_forecaster.adapters.load_forecast_repo.local_fs import (
+    LocalFsLoadForecastRepository,
+)
 from energy_forecaster.adapters.load_observation_repo.local_fs import (
     LocalFsLoadObservationRepository,
 )
@@ -34,9 +37,11 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
+    build_run_inference,
     build_run_training,
 )
 from energy_forecaster.config.settings import Environment, Settings
+from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from tests.unit.application.fakes import FakeLogger
 
 
@@ -221,3 +226,62 @@ def test_build_run_training_wires_mlflow_registry(
 
     assert isinstance(captured["registry"], MLflowModelRegistry)
     assert captured["features_path"] == tmp_path / "features.parquet"
+
+
+def test_build_run_inference_returns_callable(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+    )
+    runner = build_run_inference(settings)
+    assert callable(runner)
+
+
+def test_build_run_inference_wires_registry_and_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stub run_inference at its import site in composition and capture
+    # everything the closure forwards. Confirms the registry is the
+    # MLflow adapter, the repo is the LocalFs adapter, and the default
+    # features path comes from settings.local_data_root.
+    captured: dict[str, object] = {}
+
+    def _stub(
+        *,
+        features_path: Path,
+        registry: object,
+        repo: object,
+        clock: object,
+        model_version: ModelVersion,
+        hours: int,
+    ) -> object:
+        captured["features_path"] = features_path
+        captured["registry"] = registry
+        captured["repo"] = repo
+        captured["model_version"] = model_version
+        captured["hours"] = hours
+
+        class _StubResult:
+            forecasts_produced = 0
+            forecasts_inserted = 0
+
+        return _StubResult()
+
+    monkeypatch.setattr("energy_forecaster.composition.run_inference", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+    )
+
+    runner = build_run_inference(settings)
+    runner(ModelVersion("demand_forecaster@v1"), None, 12)
+
+    assert isinstance(captured["registry"], MLflowModelRegistry)
+    assert isinstance(captured["repo"], LocalFsLoadForecastRepository)
+    assert captured["features_path"] == tmp_path / "features.parquet"
+    captured_version = captured["model_version"]
+    assert isinstance(captured_version, ModelVersion)
+    assert captured_version.value == "demand_forecaster@v1"
+    assert captured["hours"] == 12

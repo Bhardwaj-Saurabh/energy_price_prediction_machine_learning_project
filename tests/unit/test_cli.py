@@ -487,6 +487,84 @@ class TestTrainSubcommand:
         assert "simulated training failure" in capsys.readouterr().err
 
 
+class TestPredictSubcommand:
+    """End-to-end checks for ``energy-forecaster predict``.
+
+    The real runner does MLflow load + LightGBM inference; we
+    monkeypatch it for hermetic CLI-level tests. The integration test in
+    ``tests/integration/pipelines/inference/`` covers the real path.
+    """
+
+    def test_runs_via_fake_runner_and_returns_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.model_version import (
+            ModelVersion,
+        )
+        from energy_forecaster.pipelines.inference.runner import InferenceResult
+
+        def _runner(
+            mv: ModelVersion, features: Path | None = None, hours: int = 24
+        ) -> InferenceResult:
+            now = datetime(2026, 5, 7, 12, tzinfo=UTC)
+            return InferenceResult(
+                model_version=mv,
+                forecasts_produced=24,
+                forecasts_inserted=24,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(
+            settings: object,
+        ) -> Callable[[ModelVersion, Path | None, int], InferenceResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_inference", _build)
+
+        exit_code = main(["predict", "--model", "demand_forecaster@v1"])
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Inference complete" in captured.out
+        assert "demand_forecaster@v1" in captured.out
+        assert "Forecasts produced:   24" in captured.out
+
+    def test_runner_failure_returns_exit_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+
+        from energy_forecaster.domain.value_objects.model_version import (
+            ModelVersion,
+        )
+        from energy_forecaster.pipelines.inference.runner import InferenceResult
+
+        def _runner(
+            mv: ModelVersion, features: Path | None = None, hours: int = 24
+        ) -> InferenceResult:
+            raise RuntimeError("simulated inference failure")
+
+        def _build(
+            settings: object,
+        ) -> Callable[[ModelVersion, Path | None, int], InferenceResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_inference", _build)
+
+        exit_code = main(["predict", "--model", "demand_forecaster@v1"])
+
+        assert exit_code == 1
+        assert "simulated inference failure" in capsys.readouterr().err
+
+
 class TestTimestampParsing:
     def test_full_iso_with_offset_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
         exit_code = main(

@@ -27,6 +27,9 @@ from pathlib import Path
 from energy_forecaster.adapters.clock.system_clock import SystemClock
 from energy_forecaster.adapters.entsoe_client.entsoe_py import EntsoePyClient
 from energy_forecaster.adapters.entsoe_client.in_memory import InMemoryEntsoeClient
+from energy_forecaster.adapters.load_forecast_repo.local_fs import (
+    LocalFsLoadForecastRepository,
+)
 from energy_forecaster.adapters.load_observation_repo.local_fs import (
     LocalFsLoadObservationRepository,
 )
@@ -46,8 +49,13 @@ from energy_forecaster.application.use_cases.ingest_entsoe_load import (
 )
 from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.config.settings import Settings
+from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from energy_forecaster.pipelines.feature_engineering.runner import (
     run_feature_engineering,
+)
+from energy_forecaster.pipelines.inference.runner import (
+    InferenceResult,
+    run_inference,
 )
 from energy_forecaster.pipelines.training.runner import (
     TrainingResult,
@@ -133,6 +141,41 @@ def build_run_training(settings: Settings) -> Callable[[Path | None], TrainingRe
         return run_training(
             features_path=features_path or default_features,
             registry=registry,
+        )
+
+    return _run
+
+
+def build_run_inference(
+    settings: Settings,
+) -> Callable[[ModelVersion, Path | None, int], InferenceResult]:
+    """Return a partially-applied inference runner.
+
+    Captures the registry, the LocalFs forecast repo, the system clock,
+    and the default features path from settings. The caller picks the
+    model version per invocation (and optionally the features path and
+    number of hours to predict).
+    """
+    default_features = settings.local_data_root / "features.parquet"
+    registry = MLflowModelRegistry(
+        tracking_uri=settings.mlflow_tracking_uri,
+        experiment_name="energy_forecaster",
+    )
+    repo = LocalFsLoadForecastRepository(root=settings.local_data_root)
+    clock = SystemClock()
+
+    def _run(
+        model_version: ModelVersion,
+        features_path: Path | None = None,
+        hours: int = 24,
+    ) -> InferenceResult:
+        return run_inference(
+            features_path=features_path or default_features,
+            registry=registry,
+            repo=repo,
+            clock=clock,
+            model_version=model_version,
+            hours=hours,
         )
 
     return _run

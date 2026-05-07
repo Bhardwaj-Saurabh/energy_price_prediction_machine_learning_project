@@ -35,10 +35,13 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
+    build_run_inference,
     build_run_training,
 )
 from energy_forecaster.config.settings import Settings, get_settings
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+from energy_forecaster.domain.value_objects.model_version import ModelVersion
+from energy_forecaster.pipelines.inference.runner import InferenceResult
 from energy_forecaster.pipelines.training.runner import TrainingResult
 
 
@@ -64,6 +67,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_features(args, settings=settings, logger=logger)
     if args.command == "train":
         return _run_train(args, settings=settings, logger=logger)
+    if args.command == "predict":
+        return _run_predict(args, settings=settings, logger=logger)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -135,6 +140,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Path to the feature matrix Parquet. Defaults to <EF_LOCAL_DATA_ROOT>/features.parquet."
         ),
+    )
+
+    predict = subparsers.add_parser(
+        "predict",
+        help="Run inference: load a registered model and emit LoadForecasts.",
+        description=(
+            "Backtest-mode inference. Loads the specified model version "
+            "from the configured ModelRegistry (MLflow), reads the most "
+            "recent N hours from the feature matrix, predicts loads, and "
+            "persists LoadForecast entities to JSONL."
+        ),
+    )
+    predict.add_argument(
+        "--model",
+        required=True,
+        type=str,
+        help=(
+            "Model version to load — copy from the `train` output, e.g. "
+            "'demand_forecaster@1910843f6ad74142ba0d8e5ad2923581'."
+        ),
+    )
+    predict.add_argument(
+        "--features",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the feature matrix Parquet. Defaults to <EF_LOCAL_DATA_ROOT>/features.parquet."
+        ),
+    )
+    predict.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="How many of the most recent hours to predict per zone (default 24).",
     )
 
     return parser
@@ -320,3 +359,42 @@ def _print_training_result(result: TrainingResult) -> None:
     print(f"  Started at:    {result.started_at.isoformat()}")
     print(f"  Finished at:   {result.finished_at.isoformat()}")
     print(f"  Duration:      {result.duration_seconds:.3f} s")
+
+
+def _run_predict(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    runner = build_run_inference(settings)
+    log = logger.bind(operation="inference")
+    model_version = ModelVersion(args.model)
+    log.info(
+        "predict.start",
+        model_version=model_version.value,
+        hours=args.hours,
+        features=str(args.features) if args.features else "default",
+    )
+
+    try:
+        result = runner(model_version, args.features, args.hours)
+    except Exception as exc:
+        log.error("predict.failed", error=str(exc), error_type=type(exc).__name__)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    log.info(
+        "predict.done",
+        model_version=result.model_version.value,
+        forecasts_produced=result.forecasts_produced,
+        forecasts_inserted=result.forecasts_inserted,
+        duration_seconds=round(result.duration_seconds, 3),
+    )
+    _print_inference_result(result)
+    return 0
+
+
+def _print_inference_result(result: InferenceResult) -> None:
+    print("Inference complete:")
+    print(f"  Model version:        {result.model_version.value}")
+    print(f"  Forecasts produced:   {result.forecasts_produced}")
+    print(f"  Forecasts inserted:   {result.forecasts_inserted}")
+    print(f"  Started at:           {result.started_at.isoformat()}")
+    print(f"  Finished at:          {result.finished_at.isoformat()}")
+    print(f"  Duration:             {result.duration_seconds:.3f} s")

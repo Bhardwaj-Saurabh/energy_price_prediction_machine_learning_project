@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from energy_forecaster.application.errors import DataSourceUnavailableError
+from energy_forecaster.domain.entities.load_forecast import LoadForecast
 from energy_forecaster.domain.entities.load_observation import LoadObservation
 from energy_forecaster.domain.entities.weather_reading import WeatherReading
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
@@ -204,12 +205,14 @@ class FakeModelRegistry:
     """Records every register() call and returns a deterministic ModelVersion.
 
     Same shape as :class:`MLflowModelRegistry` (in adapters/) but with no
-    serialisation, no run-id generation, no network. Tests can inspect
-    :attr:`calls` to assert on what the runner forwarded.
+    serialisation, no run-id generation, no network. The fake associates
+    each registered model with the returned ModelVersion so ``load()``
+    is symmetric with ``register()``.
     """
 
     calls: list[_RegistryCall] = field(default_factory=list)
     next_version: str = "fake_model@v1"
+    _models: dict[str, Any] = field(default_factory=dict)
 
     def register(
         self,
@@ -219,9 +222,6 @@ class FakeModelRegistry:
         params: dict[str, Any],
         metrics: dict[str, float],
     ) -> ModelVersion:
-        # Store call metadata; the model object itself is held by reference
-        # for assertion but not serialised.
-        _ = model
         self.calls.append(
             _RegistryCall(
                 registered_name=registered_name,
@@ -229,4 +229,41 @@ class FakeModelRegistry:
                 metrics=dict(metrics),
             )
         )
-        return ModelVersion(self.next_version)
+        version = ModelVersion(self.next_version)
+        self._models[version.value] = model
+        return version
+
+    def load(self, version: ModelVersion) -> Any:
+        if version.value not in self._models:
+            raise KeyError(f"FakeModelRegistry has no model for {version.value!r}")
+        return self._models[version.value]
+
+    def preload(self, version: ModelVersion, model: Any) -> None:
+        """Test helper: pre-register a (version, model) pair without
+        going through register(). Useful when the test only needs to
+        exercise the load path."""
+        self._models[version.value] = model
+
+
+@dataclass
+class FakeLoadForecastRepository:
+    """In-memory forecast repo with the same dedup contract as production.
+
+    Identity is the (zone, delivery_time, model_version) triple — same as
+    the LocalFs adapter. Tests assert on :meth:`all` to inspect what the
+    runner forwarded.
+    """
+
+    _store: dict[tuple[BiddingZone, datetime, str], LoadForecast] = field(default_factory=dict)
+
+    def add_many(self, forecasts: Iterable[LoadForecast]) -> int:
+        new_count = 0
+        for f in forecasts:
+            key = (f.zone, f.delivery_time, f.model_version.value)
+            if key not in self._store:
+                self._store[key] = f
+                new_count += 1
+        return new_count
+
+    def all(self) -> list[LoadForecast]:
+        return list(self._store.values())
