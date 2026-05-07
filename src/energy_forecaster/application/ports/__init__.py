@@ -12,6 +12,7 @@ from energy_forecaster.application.ports.load_observation_repository import (
     LoadObservationRepository,
 )
 from energy_forecaster.application.ports.logger import Logger
+from energy_forecaster.application.ports.model_registry import ModelRegistry
 from energy_forecaster.application.ports.weather_client import WeatherClient
 from energy_forecaster.application.ports.weather_reading_repository import (
     WeatherReadingRepository,
@@ -22,6 +23,7 @@ __all__ = [
     "EntsoeClient",
     "LoadObservationRepository",
     "Logger",
+    "ModelRegistry",
     "WeatherClient",
     "WeatherReadingRepository",
 ]

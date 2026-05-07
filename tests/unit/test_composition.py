@@ -18,6 +18,9 @@ from energy_forecaster.adapters.entsoe_client.in_memory import InMemoryEntsoeCli
 from energy_forecaster.adapters.load_observation_repo.local_fs import (
     LocalFsLoadObservationRepository,
 )
+from energy_forecaster.adapters.model_registry.mlflow_registry import (
+    MLflowModelRegistry,
+)
 from energy_forecaster.adapters.weather_client.in_memory import InMemoryWeatherClient
 from energy_forecaster.adapters.weather_client.open_meteo import OpenMeteoClient
 from energy_forecaster.adapters.weather_reading_repo.local_fs import (
@@ -31,6 +34,7 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
+    build_run_training,
 )
 from energy_forecaster.config.settings import Environment, Settings
 from tests.unit.application.fakes import FakeLogger
@@ -171,3 +175,49 @@ def test_build_run_feature_engineering_explicit_output_overrides_default(
     build_run_feature_engineering(settings)(explicit)
 
     assert captured["output"] == explicit
+
+
+def test_build_run_training_returns_callable(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+    )
+    runner = build_run_training(settings)
+    assert callable(runner)
+
+
+def test_build_run_training_wires_mlflow_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stub run_training at its import site in composition and capture
+    # the registry it received. Confirms the closure constructs an
+    # MLflowModelRegistry and forwards it.
+    captured: dict[str, object] = {}
+
+    def _stub(*, features_path: Path, registry: object) -> object:
+        captured["features_path"] = features_path
+        captured["registry"] = registry
+
+        class _StubResult:
+            model_version = type("V", (), {"value": "x"})()
+            train_size = 0
+            test_size = 0
+            test_mape = 0.0
+            started_at = "x"
+            finished_at = "x"
+            duration_seconds = 0.0
+
+        return _StubResult()
+
+    monkeypatch.setattr("energy_forecaster.composition.run_training", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+    )
+
+    build_run_training(settings)(None)
+
+    assert isinstance(captured["registry"], MLflowModelRegistry)
+    assert captured["features_path"] == tmp_path / "features.parquet"

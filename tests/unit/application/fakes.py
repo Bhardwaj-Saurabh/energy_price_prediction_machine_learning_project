@@ -18,6 +18,7 @@ from energy_forecaster.application.errors import DataSourceUnavailableError
 from energy_forecaster.domain.entities.load_observation import LoadObservation
 from energy_forecaster.domain.entities.weather_reading import WeatherReading
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+from energy_forecaster.domain.value_objects.model_version import ModelVersion
 
 
 class FakeClock:
@@ -189,3 +190,43 @@ class FakeLogger:
     def events(self) -> list[str]:
         """Test convenience: list of recorded event names in order."""
         return [c.event for c in self.calls]
+
+
+@dataclass(frozen=True, slots=True)
+class _RegistryCall:
+    registered_name: str
+    params: dict[str, Any]
+    metrics: dict[str, float]
+
+
+@dataclass
+class FakeModelRegistry:
+    """Records every register() call and returns a deterministic ModelVersion.
+
+    Same shape as :class:`MLflowModelRegistry` (in adapters/) but with no
+    serialisation, no run-id generation, no network. Tests can inspect
+    :attr:`calls` to assert on what the runner forwarded.
+    """
+
+    calls: list[_RegistryCall] = field(default_factory=list)
+    next_version: str = "fake_model@v1"
+
+    def register(
+        self,
+        *,
+        model: Any,
+        registered_name: str,
+        params: dict[str, Any],
+        metrics: dict[str, float],
+    ) -> ModelVersion:
+        # Store call metadata; the model object itself is held by reference
+        # for assertion but not serialised.
+        _ = model
+        self.calls.append(
+            _RegistryCall(
+                registered_name=registered_name,
+                params=dict(params),
+                metrics=dict(metrics),
+            )
+        )
+        return ModelVersion(self.next_version)

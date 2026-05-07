@@ -416,6 +416,77 @@ class TestFeaturesSubcommand:
         assert "simulated pipeline failure" in capsys.readouterr().err
 
 
+class TestTrainSubcommand:
+    """End-to-end checks for ``energy-forecaster train``.
+
+    The runner builds an MLflowModelRegistry under the hood, which is
+    safe to instantiate without a tracking server (no I/O until
+    ``register`` is called). We monkeypatch the runner to a fake to
+    keep these tests hermetic and fast — the real-MLflow path is
+    covered by the integration test in
+    ``tests/integration/adapters/model_registry/``.
+    """
+
+    def test_runs_via_fake_runner_and_returns_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.model_version import (
+            ModelVersion,
+        )
+        from energy_forecaster.pipelines.training.runner import TrainingResult
+
+        def _runner(features_path: Path | None = None) -> TrainingResult:
+            now = datetime(2026, 5, 7, 12, tzinfo=UTC)
+            return TrainingResult(
+                model_version=ModelVersion("test_model@v1"),
+                train_size=80,
+                test_size=20,
+                test_mape=0.07,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(settings: object) -> Callable[[Path | None], TrainingResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_training", _build)
+
+        exit_code = main(["train"])
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Training complete" in captured.out
+        assert "test_model@v1" in captured.out
+        assert "Test MAPE:     0.0700" in captured.out
+
+    def test_runner_failure_returns_exit_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+
+        from energy_forecaster.pipelines.training.runner import TrainingResult
+
+        def _runner(features_path: Path | None = None) -> TrainingResult:
+            raise RuntimeError("simulated training failure")
+
+        def _build(settings: object) -> Callable[[Path | None], TrainingResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_training", _build)
+
+        exit_code = main(["train"])
+
+        assert exit_code == 1
+        assert "simulated training failure" in capsys.readouterr().err
+
+
 class TestTimestampParsing:
     def test_full_iso_with_offset_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
         exit_code = main(

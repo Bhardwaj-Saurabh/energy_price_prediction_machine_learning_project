@@ -35,9 +35,11 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
+    build_run_training,
 )
 from energy_forecaster.config.settings import Settings, get_settings
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+from energy_forecaster.pipelines.training.runner import TrainingResult
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -60,6 +62,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_weather(args, settings=settings, logger=logger)
     if args.command == "features":
         return _run_features(args, settings=settings, logger=logger)
+    if args.command == "train":
+        return _run_train(args, settings=settings, logger=logger)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -112,6 +116,25 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=("Destination Parquet file. Defaults to <EF_LOCAL_DATA_ROOT>/features.parquet."),
+    )
+
+    train = subparsers.add_parser(
+        "train",
+        help="Train the demand-forecasting model on the feature matrix.",
+        description=(
+            "Run the training Kedro pipeline against the configured feature "
+            "matrix, then register the resulting model with the configured "
+            "ModelRegistry (MLflow). Outputs a summary of the model version "
+            "and test-set MAPE."
+        ),
+    )
+    train.add_argument(
+        "--features",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the feature matrix Parquet. Defaults to <EF_LOCAL_DATA_ROOT>/features.parquet."
+        ),
     )
 
     return parser
@@ -225,6 +248,36 @@ def _run_features(args: argparse.Namespace, *, settings: Settings, logger: Logge
     return 0
 
 
+def _run_train(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    runner = build_run_training(settings)
+    log = logger.bind(operation="training")
+    log.info(
+        "training.start",
+        features=str(args.features) if args.features else "default",
+    )
+
+    try:
+        result = runner(args.features)
+    except Exception as exc:
+        # Same boundary-catch policy as the features handler: any
+        # MLflow / LightGBM / pandera / filesystem error becomes a
+        # clean exit-code-1 outcome with a logged error type.
+        log.error("training.failed", error=str(exc), error_type=type(exc).__name__)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    log.info(
+        "training.done",
+        model_version=result.model_version.value,
+        test_mape=result.test_mape,
+        train_size=result.train_size,
+        test_size=result.test_size,
+        duration_seconds=round(result.duration_seconds, 3),
+    )
+    _print_training_result(result)
+    return 0
+
+
 def _print_load_result(result: IngestEntsoeLoadResult) -> None:
     print("Ingest complete:")
     print(f"  Zones processed:       {result.zones_processed}")
@@ -256,3 +309,14 @@ def _print_features_result(output_path: Path, duration_seconds: float) -> None:
     print(f"  Rows:      {len(df)}")
     print(f"  Columns:   {len(df.columns)}")
     print(f"  Duration:  {duration_seconds:.3f} s")
+
+
+def _print_training_result(result: TrainingResult) -> None:
+    print("Training complete:")
+    print(f"  Model version: {result.model_version.value}")
+    print(f"  Train rows:    {result.train_size}")
+    print(f"  Test rows:     {result.test_size}")
+    print(f"  Test MAPE:     {result.test_mape:.4f}")
+    print(f"  Started at:    {result.started_at.isoformat()}")
+    print(f"  Finished at:   {result.finished_at.isoformat()}")
+    print(f"  Duration:      {result.duration_seconds:.3f} s")

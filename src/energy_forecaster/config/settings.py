@@ -91,6 +91,12 @@ class Settings(BaseSettings):
 
     weather_source: WeatherSource = "synthetic"
 
+    # MLflow tracking URI. ``file://`` paths produce a local mlruns/
+    # directory; in production this points at the Azure-hosted MLflow
+    # server (Postgres backend, Blob artifact store). Setting it via
+    # env keeps the URL out of code and out of git.
+    mlflow_tracking_uri: str = "file:./mlruns"
+
     @field_validator("entsoe_api_key", mode="before")
     @classmethod
     def _blank_string_is_unset(cls, value: object) -> object:

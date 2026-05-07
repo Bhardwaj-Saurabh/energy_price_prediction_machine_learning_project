@@ -46,6 +46,14 @@ dependencies = [
     "kedro-datasets[pandas]>=8.0.0",
     # pyarrow — Parquet reader/writer for the feature matrix output.
     "pyarrow>=18.0.0",
+    # lightgbm — gradient-boosted trees. The training pipeline's only
+    # model dependency for now; baseline + challengers may add others.
+    "lightgbm>=4.5.0",
+    # scikit-learn — for MAPE / metric helpers used in evaluation.
+    "scikit-learn>=1.5.0",
+    # mlflow — experiment tracking and model registry. Confined to the
+    # MLflowModelRegistry adapter; nothing else imports mlflow.
+    "mlflow>=2.18.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -132,6 +140,12 @@ module = [
     "pandas.*",
     "kedro_datasets",
     "kedro_datasets.*",
+    "sklearn",
+    "sklearn.*",
+    "lightgbm",
+    "lightgbm.*",
+    "mlflow",
+    "mlflow.*",
 ]
 ignore_missing_imports = true
 

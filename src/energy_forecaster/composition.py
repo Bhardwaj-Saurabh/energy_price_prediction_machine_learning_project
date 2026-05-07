@@ -30,6 +30,9 @@ from energy_forecaster.adapters.entsoe_client.in_memory import InMemoryEntsoeCli
 from energy_forecaster.adapters.load_observation_repo.local_fs import (
     LocalFsLoadObservationRepository,
 )
+from energy_forecaster.adapters.model_registry.mlflow_registry import (
+    MLflowModelRegistry,
+)
 from energy_forecaster.adapters.weather_client.in_memory import InMemoryWeatherClient
 from energy_forecaster.adapters.weather_client.open_meteo import OpenMeteoClient
 from energy_forecaster.adapters.weather_reading_repo.local_fs import (
@@ -45,6 +48,10 @@ from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.config.settings import Settings
 from energy_forecaster.pipelines.feature_engineering.runner import (
     run_feature_engineering,
+)
+from energy_forecaster.pipelines.training.runner import (
+    TrainingResult,
+    run_training,
 )
 
 
@@ -103,6 +110,29 @@ def build_run_feature_engineering(
             load_directory=load_directory,
             weather_directory=weather_directory,
             output_path=output_path or default_output,
+        )
+
+    return _run
+
+
+def build_run_training(settings: Settings) -> Callable[[Path | None], TrainingResult]:
+    """Return a partially-applied training runner.
+
+    The closure captures the default features-input path (under
+    ``local_data_root``) and constructs an :class:`MLflowModelRegistry`
+    pointed at ``settings.mlflow_tracking_uri``. The MLflow adapter is
+    inert until ``register`` is called, so this is safe at composition.
+    """
+    default_features = settings.local_data_root / "features.parquet"
+    registry = MLflowModelRegistry(
+        tracking_uri=settings.mlflow_tracking_uri,
+        experiment_name="energy_forecaster",
+    )
+
+    def _run(features_path: Path | None = None) -> TrainingResult:
+        return run_training(
+            features_path=features_path or default_features,
+            registry=registry,
         )
 
     return _run
