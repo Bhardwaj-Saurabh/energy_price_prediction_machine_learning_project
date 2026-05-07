@@ -33,6 +33,9 @@ dependencies = [
     # The application layer talks to a Logger Protocol; this dep stays
     # confined to adapters/logger/structlog_logger.py.
     "structlog>=24.4.0",
+    # pandera[pandas] — schema validation for DataFrames. The contracts/
+    # package owns this; nothing else imports pandera directly.
+    "pandera[pandas]>=0.20.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
