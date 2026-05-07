@@ -36,6 +36,10 @@ def _isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     # Default weather source for CLI tests is the deterministic synthetic
     # adapter — no network surprises in CI.
     monkeypatch.setenv("EF_WEATHER_SOURCE", "synthetic")
+    # Silence structlog output so CLI-stdout assertions are not polluted
+    # by log lines. The logging logic itself is exercised in the use case
+    # and adapter test suites.
+    monkeypatch.setenv("EF_LOG_LEVEL", "CRITICAL")
     get_settings.cache_clear()
 
 
@@ -133,7 +137,7 @@ class TestApplicationErrorHandling:
 
         monkeypatch.setattr(
             "energy_forecaster.cli.build_ingest_entsoe_load",
-            lambda settings: _FailingUseCase(),
+            lambda settings, *, logger: _FailingUseCase(),
         )
 
         exit_code = main(
@@ -287,7 +291,7 @@ class TestWeatherSubcommand:
 
         monkeypatch.setattr(
             "energy_forecaster.cli.build_ingest_weather",
-            lambda settings: _FailingUseCase(),
+            lambda settings, *, logger: _FailingUseCase(),
         )
 
         exit_code = main(

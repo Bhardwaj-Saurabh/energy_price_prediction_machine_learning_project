@@ -15,6 +15,7 @@ from energy_forecaster.domain.entities.weather_reading import WeatherReading
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 from tests.unit.application.fakes import (
     FakeClock,
+    FakeLogger,
     FakeWeatherClient,
     FakeWeatherReadingRepository,
 )
@@ -43,17 +44,25 @@ def _hourly_weather(zone: BiddingZone, start: datetime, hours: int) -> list[Weat
 def _build(
     *,
     clock_at: datetime | None = None,
-) -> tuple[IngestWeather, FakeWeatherClient, FakeWeatherReadingRepository, FakeClock]:
+    logger: FakeLogger | None = None,
+) -> tuple[
+    IngestWeather,
+    FakeWeatherClient,
+    FakeWeatherReadingRepository,
+    FakeClock,
+    FakeLogger,
+]:
     clock = FakeClock(now=clock_at or _utc(2026, 5, 5, 6))
     weather = FakeWeatherClient()
     repo = FakeWeatherReadingRepository()
-    use_case = IngestWeather(weather=weather, repo=repo, clock=clock)
-    return use_case, weather, repo, clock
+    logger = logger or FakeLogger()
+    use_case = IngestWeather(weather=weather, repo=repo, clock=clock, logger=logger)
+    return use_case, weather, repo, clock, logger
 
 
 class TestHappyPath:
     def test_typical_run_fetches_and_inserts_for_every_zone(self) -> None:
-        use_case, weather, repo, _ = _build()
+        use_case, weather, repo, _, _ = _build()
         window_start = _utc(2026, 5, 4, 0)
         window_end = _utc(2026, 5, 5, 0)
         weather.seed(BiddingZone.DE_LU, _hourly_weather(BiddingZone.DE_LU, window_start, 24))
@@ -73,7 +82,7 @@ class TestHappyPath:
 
 class TestDeduplication:
     def test_re_running_same_window_inserts_zero_new(self) -> None:
-        use_case, weather, repo, _ = _build()
+        use_case, weather, repo, _, _ = _build()
         start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
         weather.seed(BiddingZone.DE_LU, _hourly_weather(BiddingZone.DE_LU, start, 24))
 
@@ -120,7 +129,7 @@ class TestInputValidation:
 
 class TestErrorPropagation:
     def test_weather_failure_aborts_run_fail_fast(self) -> None:
-        use_case, weather, repo, _ = _build()
+        use_case, weather, repo, _, _ = _build()
         start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
         weather.seed(BiddingZone.DE_LU, _hourly_weather(BiddingZone.DE_LU, start, 24))
         weather.fail_on(BiddingZone.DE_LU)
@@ -129,3 +138,23 @@ class TestErrorPropagation:
         with pytest.raises(DataSourceUnavailableError):
             use_case.execute(zones=[BiddingZone.DE_LU, BiddingZone.FR], start=start, end=end)
         assert repo.all() == []
+
+
+class TestLogging:
+    def test_emits_start_and_done_events(self) -> None:
+        use_case, weather, _, _, logger = _build()
+        start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
+        weather.seed(BiddingZone.DE_LU, _hourly_weather(BiddingZone.DE_LU, start, 24))
+
+        use_case.execute(zones=[BiddingZone.DE_LU], start=start, end=end)
+
+        assert {"weather.start", "weather.done"}.issubset(set(logger.events()))
+
+    def test_correlation_id_is_inherited_from_bound_logger(self) -> None:
+        use_case, weather, _, _, logger = _build(logger=FakeLogger().bind(correlation_id="xyz-789"))
+        start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
+        weather.seed(BiddingZone.DE_LU, _hourly_weather(BiddingZone.DE_LU, start, 24))
+
+        use_case.execute(zones=[BiddingZone.DE_LU], start=start, end=end)
+
+        assert all(c.context.get("correlation_id") == "xyz-789" for c in logger.calls)

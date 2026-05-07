@@ -10,7 +10,9 @@ calls.
 """
 
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 from energy_forecaster.application.errors import DataSourceUnavailableError
 from energy_forecaster.domain.entities.load_observation import LoadObservation
@@ -141,3 +143,49 @@ class FakeWeatherReadingRepository:
 
     def all(self) -> list[WeatherReading]:
         return list(self._store.values())
+
+
+@dataclass(frozen=True, slots=True)
+class LogCall:
+    """One captured log invocation. ``context`` includes any bound fields
+    inherited from ``bind()`` plus per-call keyword arguments."""
+
+    level: str
+    event: str
+    context: dict[str, Any]
+
+
+@dataclass
+class FakeLogger:
+    """Records every log call into a shared list for assertion in tests.
+
+    ``bind()`` returns a *new* FakeLogger that shares the recording list
+    with its parent and merges in the additional context. This mirrors
+    structlog's BoundLogger semantics — once bound, every subsequent
+    call carries the bound fields automatically.
+    """
+
+    calls: list[LogCall] = field(default_factory=list)
+    _bound: dict[str, Any] = field(default_factory=dict)
+
+    def bind(self, **context: Any) -> "FakeLogger":
+        return FakeLogger(calls=self.calls, _bound={**self._bound, **context})
+
+    def _record(self, level: str, event: str, **context: Any) -> None:
+        self.calls.append(LogCall(level=level, event=event, context={**self._bound, **context}))
+
+    def debug(self, event: str, **context: Any) -> None:
+        self._record("debug", event, **context)
+
+    def info(self, event: str, **context: Any) -> None:
+        self._record("info", event, **context)
+
+    def warning(self, event: str, **context: Any) -> None:
+        self._record("warning", event, **context)
+
+    def error(self, event: str, **context: Any) -> None:
+        self._record("error", event, **context)
+
+    def events(self) -> list[str]:
+        """Test convenience: list of recorded event names in order."""
+        return [c.event for c in self.calls]

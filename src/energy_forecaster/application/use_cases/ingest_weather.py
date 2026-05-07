@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from energy_forecaster.application.ports.clock import Clock
+from energy_forecaster.application.ports.logger import Logger
 from energy_forecaster.application.ports.weather_client import WeatherClient
 from energy_forecaster.application.ports.weather_reading_repository import (
     WeatherReadingRepository,
@@ -32,10 +33,8 @@ class IngestWeather:
     """Fetch hourly weather observations and persist them, deduplicated.
 
     Mirrors :class:`IngestEntsoeLoad` in shape: same ports pattern (read,
-    write, clock), same fail-fast semantics on the first adapter error,
-    same UTC-only window invariants. Differences are isolated to the
-    entity types and the names — a deliberate consequence of treating the
-    architecture as a template rather than a one-off.
+    write, clock, logger), same fail-fast semantics on the first adapter
+    error, same UTC-only window invariants.
     """
 
     def __init__(
@@ -44,10 +43,12 @@ class IngestWeather:
         weather: WeatherClient,
         repo: WeatherReadingRepository,
         clock: Clock,
+        logger: Logger,
     ) -> None:
         self._weather = weather
         self._repo = repo
         self._clock = clock
+        self._logger = logger
 
     def execute(
         self,
@@ -65,16 +66,39 @@ class IngestWeather:
                 f"start {start.isoformat()} must be strictly before end {end.isoformat()}"
             )
 
+        log = self._logger.bind(operation="ingest_weather")
+        log.info(
+            "weather.start",
+            zones=[z.value for z in zones],
+            start=start.isoformat(),
+            end=end.isoformat(),
+        )
+
         started_at = self._clock.now()
         total_fetched = 0
         total_inserted = 0
 
         for zone in zones:
+            zone_log = log.bind(zone=zone.value)
             readings = list(self._weather.fetch_weather(zone=zone, start=start, end=end))
+            inserted = self._repo.add_many(readings)
             total_fetched += len(readings)
-            total_inserted += self._repo.add_many(readings)
+            total_inserted += inserted
+            zone_log.debug(
+                "weather.zone.done",
+                fetched=len(readings),
+                inserted=inserted,
+            )
 
         finished_at = self._clock.now()
+
+        log.info(
+            "weather.done",
+            zones_processed=len(zones),
+            readings_fetched=total_fetched,
+            readings_inserted=total_inserted,
+            duration_seconds=round((finished_at - started_at).total_seconds(), 3),
+        )
 
         return IngestWeatherResult(
             zones_processed=len(zones),

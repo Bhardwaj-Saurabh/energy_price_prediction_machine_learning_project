@@ -29,6 +29,10 @@ dependencies = [
     # installed by entsoe-py too, but declared explicitly so a future
     # entsoe replacement does not silently strip it.
     "requests>=2.32.0",
+    # structlog — structured logging used by the StructlogLogger adapter.
+    # The application layer talks to a Logger Protocol; this dep stays
+    # confined to adapters/logger/structlog_logger.py.
+    "structlog>=24.4.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -46,6 +50,9 @@ dev = [
     "mypy>=1.13.0",
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
+    # Type stubs for ``requests`` — published as a separate distribution
+    # by the typeshed maintainers since requests doesn't ship inline.
+    "types-requests>=2.32.0",
 ]
 
 [build-system]
@@ -108,12 +115,9 @@ pretty = true
 module = ["entsoe", "entsoe.*", "pandas", "pandas.*"]
 ignore_missing_imports = true
 
-# requests has type hints since 2.32, but the stub for non-default keyword
-# argument shapes (e.g. timeouts as float | tuple) trips mypy strict in
-# corner cases. We tolerate untyped imports at the adapter boundary only.
-[[tool.mypy.overrides]]
-module = ["requests", "requests.*"]
-ignore_missing_imports = true
+# requests ships its own type hints since 2.32, so no override needed —
+# the entsoe / pandas overrides above are kept because those libraries
+# do not.
 
 # ---------------------------------------------------------------------------
 # Pytest — coverage gate matches the rulebook's >80% target.

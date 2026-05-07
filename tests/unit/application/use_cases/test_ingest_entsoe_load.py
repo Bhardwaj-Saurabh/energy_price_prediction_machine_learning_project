@@ -21,6 +21,7 @@ from tests.unit.application.fakes import (
     FakeClock,
     FakeEntsoeClient,
     FakeLoadObservationRepository,
+    FakeLogger,
 )
 
 
@@ -47,22 +48,25 @@ def _build(
     clock_at: datetime | None = None,
     entsoe: FakeEntsoeClient | None = None,
     repo: FakeLoadObservationRepository | None = None,
+    logger: FakeLogger | None = None,
 ) -> tuple[
     IngestEntsoeLoad,
     FakeEntsoeClient,
     FakeLoadObservationRepository,
     FakeClock,
+    FakeLogger,
 ]:
     clock = FakeClock(now=clock_at or _utc(2026, 5, 5, 6))
     entsoe = entsoe or FakeEntsoeClient()
     repo = repo or FakeLoadObservationRepository()
-    use_case = IngestEntsoeLoad(entsoe=entsoe, repo=repo, clock=clock)
-    return use_case, entsoe, repo, clock
+    logger = logger or FakeLogger()
+    use_case = IngestEntsoeLoad(entsoe=entsoe, repo=repo, clock=clock, logger=logger)
+    return use_case, entsoe, repo, clock, logger
 
 
 class TestHappyPath:
     def test_typical_run_fetches_and_inserts_for_every_zone(self) -> None:
-        use_case, entsoe, repo, _ = _build()
+        use_case, entsoe, repo, _, _ = _build()
         window_start = _utc(2026, 5, 4, 0)
         window_end = _utc(2026, 5, 5, 0)
         entsoe.seed(BiddingZone.DE_LU, _hourly_load(BiddingZone.DE_LU, window_start, 24))
@@ -82,7 +86,7 @@ class TestHappyPath:
     def test_window_is_half_open(self) -> None:
         # Observation at ``end`` itself is excluded — ENTSO-E queries are
         # half-open in the same way, so the use case behaves consistently.
-        use_case, entsoe, _, _ = _build()
+        use_case, entsoe, _, _, _ = _build()
         start = _utc(2026, 5, 4, 0)
         end = _utc(2026, 5, 4, 2)
         entsoe.seed(
@@ -97,7 +101,7 @@ class TestHappyPath:
 
 class TestDeduplication:
     def test_re_running_same_window_inserts_zero_new(self) -> None:
-        use_case, entsoe, repo, _ = _build()
+        use_case, entsoe, repo, _, _ = _build()
         start = _utc(2026, 5, 4, 0)
         end = _utc(2026, 5, 5, 0)
         entsoe.seed(
@@ -159,7 +163,7 @@ class TestErrorPropagation:
     def test_entsoe_failure_aborts_run_fail_fast(self) -> None:
         # The first zone that fails halts processing — later zones are not
         # consulted. This is the documented fail-fast contract.
-        use_case, entsoe, repo, _ = _build()
+        use_case, entsoe, repo, _, _ = _build()
         start = _utc(2026, 5, 4)
         end = _utc(2026, 5, 5)
         entsoe.seed(BiddingZone.DE_LU, _hourly_load(BiddingZone.DE_LU, start, 24))
@@ -179,9 +183,46 @@ class TestErrorPropagation:
         assert repo.all() == []
 
 
+class TestLogging:
+    def test_emits_start_and_done_events_with_zone_and_window(self) -> None:
+        use_case, entsoe, _, _, logger = _build()
+        start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
+        entsoe.seed(BiddingZone.DE_LU, _hourly_load(BiddingZone.DE_LU, start, 24))
+
+        use_case.execute(zones=[BiddingZone.DE_LU], start=start, end=end)
+
+        events = logger.events()
+        assert "ingest.start" in events
+        assert "ingest.done" in events
+
+    def test_done_event_carries_aggregated_counts(self) -> None:
+        use_case, entsoe, _, _, logger = _build()
+        start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
+        entsoe.seed(BiddingZone.DE_LU, _hourly_load(BiddingZone.DE_LU, start, 24))
+
+        use_case.execute(zones=[BiddingZone.DE_LU], start=start, end=end)
+
+        done = next(c for c in logger.calls if c.event == "ingest.done")
+        assert done.context["zones_processed"] == 1
+        assert done.context["observations_fetched"] == 24
+        assert done.context["observations_inserted"] == 24
+
+    def test_bound_correlation_id_propagates_to_every_event(self) -> None:
+        # The CLI binds correlation_id at process entry and passes the
+        # result here. Every subsequent log call must inherit it — that
+        # is the whole reason for the bind() pattern.
+        use_case, entsoe, _, _, logger = _build(logger=FakeLogger().bind(correlation_id="abc-123"))
+        start, end = _utc(2026, 5, 4), _utc(2026, 5, 5)
+        entsoe.seed(BiddingZone.DE_LU, _hourly_load(BiddingZone.DE_LU, start, 24))
+
+        use_case.execute(zones=[BiddingZone.DE_LU], start=start, end=end)
+
+        assert all(c.context.get("correlation_id") == "abc-123" for c in logger.calls)
+
+
 class TestTimingFromInjectedClock:
     def test_started_and_finished_come_from_clock_not_real_time(self) -> None:
-        use_case, entsoe, _, clock = _build(clock_at=_utc(2026, 5, 5, 6))
+        use_case, entsoe, _, clock, _ = _build(clock_at=_utc(2026, 5, 5, 6))
         entsoe.seed(
             BiddingZone.DE_LU,
             _hourly_load(BiddingZone.DE_LU, _utc(2026, 5, 4), 1),

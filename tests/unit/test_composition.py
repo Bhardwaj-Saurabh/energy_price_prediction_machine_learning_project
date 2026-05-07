@@ -31,6 +31,7 @@ from energy_forecaster.composition import (
     build_ingest_weather,
 )
 from energy_forecaster.config.settings import Environment, Settings
+from tests.unit.application.fakes import FakeLogger
 
 
 def test_build_ingest_entsoe_load_returns_a_use_case(tmp_path: Path) -> None:
@@ -39,7 +40,7 @@ def test_build_ingest_entsoe_load_returns_a_use_case(tmp_path: Path) -> None:
         environment=Environment.LOCAL,
         local_data_root=tmp_path,
     )
-    use_case = build_ingest_entsoe_load(settings)
+    use_case = build_ingest_entsoe_load(settings, logger=FakeLogger())
     assert isinstance(use_case, IngestEntsoeLoad)
 
 
@@ -54,7 +55,7 @@ def test_no_api_key_picks_in_memory_entsoe(tmp_path: Path) -> None:
         local_data_root=tmp_path,
         entsoe_api_key=None,
     )
-    use_case = build_ingest_entsoe_load(settings)
+    use_case = build_ingest_entsoe_load(settings, logger=FakeLogger())
     assert isinstance(use_case._entsoe, InMemoryEntsoeClient)
     assert isinstance(use_case._repo, LocalFsLoadObservationRepository)
     assert isinstance(use_case._clock, SystemClock)
@@ -69,7 +70,7 @@ def test_api_key_present_picks_real_entsoe_py_client(tmp_path: Path) -> None:
         local_data_root=tmp_path,
         entsoe_api_key=SecretStr("placeholder-not-real"),
     )
-    use_case = build_ingest_entsoe_load(settings)
+    use_case = build_ingest_entsoe_load(settings, logger=FakeLogger())
     assert isinstance(use_case._entsoe, EntsoePyClient)
 
 
@@ -79,7 +80,7 @@ def test_weather_source_synthetic_picks_in_memory_weather(tmp_path: Path) -> Non
         local_data_root=tmp_path,
         weather_source="synthetic",
     )
-    use_case = build_ingest_weather(settings)
+    use_case = build_ingest_weather(settings, logger=FakeLogger())
     assert isinstance(use_case, IngestWeather)
     assert isinstance(use_case._weather, InMemoryWeatherClient)
     assert isinstance(use_case._repo, LocalFsWeatherReadingRepository)
@@ -92,5 +93,5 @@ def test_weather_source_open_meteo_picks_real_client(tmp_path: Path) -> None:
         local_data_root=tmp_path,
         weather_source="open_meteo",
     )
-    use_case = build_ingest_weather(settings)
+    use_case = build_ingest_weather(settings, logger=FakeLogger())
     assert isinstance(use_case._weather, OpenMeteoClient)

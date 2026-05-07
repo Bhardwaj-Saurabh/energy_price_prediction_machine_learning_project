@@ -16,7 +16,9 @@ Branching policy:
     keyless so the discriminator is an explicit setting rather than
     credential presence.
 
-The use case never knows which adapter it received — that is the point.
+The build functions take an injected ``logger`` so the framework layer
+(CLI, FastAPI) can establish a request-scoped bound logger — typically
+with a ``correlation_id`` — and have it flow into every use case.
 """
 
 from energy_forecaster.adapters.clock.system_clock import SystemClock
@@ -31,6 +33,7 @@ from energy_forecaster.adapters.weather_reading_repo.local_fs import (
     LocalFsWeatherReadingRepository,
 )
 from energy_forecaster.application.ports.entsoe_client import EntsoeClient
+from energy_forecaster.application.ports.logger import Logger
 from energy_forecaster.application.ports.weather_client import WeatherClient
 from energy_forecaster.application.use_cases.ingest_entsoe_load import (
     IngestEntsoeLoad,
@@ -39,7 +42,7 @@ from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.config.settings import Settings
 
 
-def build_ingest_entsoe_load(settings: Settings) -> IngestEntsoeLoad:
+def build_ingest_entsoe_load(settings: Settings, *, logger: Logger) -> IngestEntsoeLoad:
     """Wire :class:`IngestEntsoeLoad` for the given environment."""
     entsoe: EntsoeClient
     if settings.entsoe_api_key is None:
@@ -51,10 +54,11 @@ def build_ingest_entsoe_load(settings: Settings) -> IngestEntsoeLoad:
         entsoe=entsoe,
         repo=LocalFsLoadObservationRepository(root=settings.local_data_root),
         clock=SystemClock(),
+        logger=logger,
     )
 
 
-def build_ingest_weather(settings: Settings) -> IngestWeather:
+def build_ingest_weather(settings: Settings, *, logger: Logger) -> IngestWeather:
     """Wire :class:`IngestWeather` for the given environment."""
     weather: WeatherClient
     if settings.weather_source == "synthetic":
@@ -66,4 +70,5 @@ def build_ingest_weather(settings: Settings) -> IngestWeather:
         weather=weather,
         repo=LocalFsWeatherReadingRepository(root=settings.local_data_root),
         clock=SystemClock(),
+        logger=logger,
     )

@@ -65,7 +65,9 @@ class OpenMeteoClient:
         end: datetime,
     ) -> Iterable[WeatherReading]:
         lat, lon = _ZONE_LAT_LON[zone]
-        params = {
+        # Annotated dict so types-requests sees a single value union and
+        # doesn't widen to `object` (which trips its `params=` overload).
+        params: dict[str, str | float] = {
             "latitude": lat,
             "longitude": lon,
             "start_date": start.date().isoformat(),

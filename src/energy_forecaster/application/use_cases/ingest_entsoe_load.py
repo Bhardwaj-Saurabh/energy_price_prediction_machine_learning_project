@@ -9,6 +9,7 @@ from energy_forecaster.application.ports.entsoe_client import EntsoeClient
 from energy_forecaster.application.ports.load_observation_repository import (
     LoadObservationRepository,
 )
+from energy_forecaster.application.ports.logger import Logger
 from energy_forecaster.domain import require_utc
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 
@@ -43,8 +44,10 @@ class IngestEntsoeLoad:
       * ``repo``   — write side; idempotent add_many.
       * ``clock``  — wall clock for the started_at / finished_at audit
                      fields. Injected so tests are deterministic.
+      * ``logger`` — structured logger. Use cases log decisions at INFO;
+                     per-zone progress at DEBUG.
 
-    Failure mode: fail-fast. The first ``DataSourceUnavailable`` raised
+    Failure mode: fail-fast. The first ``DataSourceUnavailableError`` raised
     by the ENTSO-E adapter aborts the run; later zones are not attempted.
     A "best-effort, partial result" mode is a deliberate later
     decision — adding it without explicit demand is premature.
@@ -56,10 +59,12 @@ class IngestEntsoeLoad:
         entsoe: EntsoeClient,
         repo: LoadObservationRepository,
         clock: Clock,
+        logger: Logger,
     ) -> None:
         self._entsoe = entsoe
         self._repo = repo
         self._clock = clock
+        self._logger = logger
 
     def execute(
         self,
@@ -77,16 +82,39 @@ class IngestEntsoeLoad:
                 f"start {start.isoformat()} must be strictly before end {end.isoformat()}"
             )
 
+        log = self._logger.bind(operation="ingest_entsoe_load")
+        log.info(
+            "ingest.start",
+            zones=[z.value for z in zones],
+            start=start.isoformat(),
+            end=end.isoformat(),
+        )
+
         started_at = self._clock.now()
         total_fetched = 0
         total_inserted = 0
 
         for zone in zones:
+            zone_log = log.bind(zone=zone.value)
             observations = list(self._entsoe.fetch_load(zone=zone, start=start, end=end))
+            inserted = self._repo.add_many(observations)
             total_fetched += len(observations)
-            total_inserted += self._repo.add_many(observations)
+            total_inserted += inserted
+            zone_log.debug(
+                "ingest.zone.done",
+                fetched=len(observations),
+                inserted=inserted,
+            )
 
         finished_at = self._clock.now()
+
+        log.info(
+            "ingest.done",
+            zones_processed=len(zones),
+            observations_fetched=total_fetched,
+            observations_inserted=total_inserted,
+            duration_seconds=round((finished_at - started_at).total_seconds(), 3),
+        )
 
         return IngestEntsoeLoadResult(
             zones_processed=len(zones),

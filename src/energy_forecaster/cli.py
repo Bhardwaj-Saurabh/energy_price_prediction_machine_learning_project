@@ -3,22 +3,26 @@
 Single entrypoint exposed by the ``[project.scripts]`` table in
 ``pyproject.toml``. Subcommands map 1-to-1 onto use cases — the CLI is a
 *framework* in the clean-architecture sense, just like the future FastAPI
-app: it parses arguments, calls the composition root to build a wired use
-case, executes it, and renders the result. No business logic lives here.
-
-Adding a subcommand: register it in :func:`_build_parser`, and add a
-corresponding ``_run_<command>`` handler that takes the parsed
-``argparse.Namespace`` and returns an exit code.
+app: it parses arguments, configures structured logging, builds a
+correlation-id-bound logger, calls the composition root to assemble a
+wired use case, executes it, and renders the result. No business logic
+lives here.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from energy_forecaster.adapters.logger.structlog_logger import (
+    StructlogLogger,
+    configure_structlog,
+)
 from energy_forecaster.application.errors import ApplicationError
+from energy_forecaster.application.ports.logger import Logger
 from energy_forecaster.application.use_cases.ingest_entsoe_load import (
     IngestEntsoeLoadResult,
 )
@@ -29,7 +33,7 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
 )
-from energy_forecaster.config.settings import get_settings
+from energy_forecaster.config.settings import Settings, get_settings
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 
 
@@ -38,10 +42,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    settings = get_settings()
+    configure_structlog(log_level=settings.log_level, environment=settings.environment)
+
+    # One correlation_id per CLI invocation. Every log line emitted while
+    # this process runs carries it, which is the cheapest first step
+    # toward distributed tracing — once we add HTTP serving, the same
+    # field becomes the request ID.
+    logger = StructlogLogger().bind(correlation_id=str(uuid.uuid4()))
+
     if args.command == "ingest":
-        return _run_ingest(args)
+        return _run_ingest(args, settings=settings, logger=logger)
     if args.command == "weather":
-        return _run_weather(args)
+        return _run_weather(args, settings=settings, logger=logger)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -132,14 +145,14 @@ def _parse_timestamp(raw: str) -> datetime:
     return dt
 
 
-def _run_ingest(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    use_case = build_ingest_entsoe_load(settings)
+def _run_ingest(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    use_case = build_ingest_entsoe_load(settings, logger=logger)
     zones = [BiddingZone(z) for z in args.zone]
 
     try:
         result = use_case.execute(zones=zones, start=args.start, end=args.end)
     except ApplicationError as exc:
+        logger.error("ingest.failed", error=str(exc))
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -147,14 +160,14 @@ def _run_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_weather(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    use_case = build_ingest_weather(settings)
+def _run_weather(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    use_case = build_ingest_weather(settings, logger=logger)
     zones = [BiddingZone(z) for z in args.zone]
 
     try:
         result = use_case.execute(zones=zones, start=args.start, end=args.end)
     except ApplicationError as exc:
+        logger.error("weather.failed", error=str(exc))
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
