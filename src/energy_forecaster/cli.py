@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 
 from energy_forecaster.adapters.logger.structlog_logger import (
     StructlogLogger,
@@ -32,6 +34,7 @@ from energy_forecaster.application.use_cases.ingest_weather import (
 from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
+    build_run_feature_engineering,
 )
 from energy_forecaster.config.settings import Settings, get_settings
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
@@ -55,6 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_ingest(args, settings=settings, logger=logger)
     if args.command == "weather":
         return _run_weather(args, settings=settings, logger=logger)
+    if args.command == "features":
+        return _run_features(args, settings=settings, logger=logger)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -90,6 +95,24 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_zone_window_args(weather)
+
+    features = subparsers.add_parser(
+        "features",
+        help="Build the feature matrix from previously ingested JSONL.",
+        description=(
+            "Run the feature engineering Kedro pipeline. Reads "
+            "load_observations/ and weather_readings/ from the configured "
+            "data root, joins on (zone, timestamp), adds calendar + lag "
+            "features, validates against FeatureMatrixSchema, and writes "
+            "Parquet."
+        ),
+    )
+    features.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=("Destination Parquet file. Defaults to <EF_LOCAL_DATA_ROOT>/features.parquet."),
+    )
 
     return parser
 
@@ -175,6 +198,33 @@ def _run_weather(args: argparse.Namespace, *, settings: Settings, logger: Logger
     return 0
 
 
+def _run_features(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    runner = build_run_feature_engineering(settings)
+    log = logger.bind(operation="feature_engineering")
+    log.info("features.start", output=str(args.output) if args.output else "default")
+
+    started = time.monotonic()
+    try:
+        output_path = runner(args.output)
+    except Exception as exc:
+        # Deliberate framework-layer boundary catch: the feature pipeline
+        # may raise pandera, kedro, pyarrow, or filesystem errors. They
+        # are logged with their type and surfaced as exit code 1; we do
+        # not let them crash the CLI with a stack trace.
+        log.error("features.failed", error=str(exc), error_type=type(exc).__name__)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    duration = time.monotonic() - started
+
+    log.info(
+        "features.done",
+        output_path=str(output_path),
+        duration_seconds=round(duration, 3),
+    )
+    _print_features_result(output_path, duration)
+    return 0
+
+
 def _print_load_result(result: IngestEntsoeLoadResult) -> None:
     print("Ingest complete:")
     print(f"  Zones processed:       {result.zones_processed}")
@@ -193,3 +243,16 @@ def _print_weather_result(result: IngestWeatherResult) -> None:
     print(f"  Started at:         {result.started_at.isoformat()}")
     print(f"  Finished at:        {result.finished_at.isoformat()}")
     print(f"  Duration:           {result.duration_seconds:.3f} s")
+
+
+def _print_features_result(output_path: Path, duration_seconds: float) -> None:
+    # Read the freshly written Parquet for a row + column count. pandas is
+    # already a project dep; the cost is negligible for sane sizes.
+    import pandas as pd
+
+    df = pd.read_parquet(output_path)
+    print("Feature engineering complete:")
+    print(f"  Output:    {output_path}")
+    print(f"  Rows:      {len(df)}")
+    print(f"  Columns:   {len(df.columns)}")
+    print(f"  Duration:  {duration_seconds:.3f} s")

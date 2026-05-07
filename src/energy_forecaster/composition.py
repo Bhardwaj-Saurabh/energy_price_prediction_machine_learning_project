@@ -21,6 +21,9 @@ The build functions take an injected ``logger`` so the framework layer
 with a ``correlation_id`` — and have it flow into every use case.
 """
 
+from collections.abc import Callable
+from pathlib import Path
+
 from energy_forecaster.adapters.clock.system_clock import SystemClock
 from energy_forecaster.adapters.entsoe_client.entsoe_py import EntsoePyClient
 from energy_forecaster.adapters.entsoe_client.in_memory import InMemoryEntsoeClient
@@ -40,6 +43,9 @@ from energy_forecaster.application.use_cases.ingest_entsoe_load import (
 )
 from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.config.settings import Settings
+from energy_forecaster.pipelines.feature_engineering.runner import (
+    run_feature_engineering,
+)
 
 
 def build_ingest_entsoe_load(settings: Settings, *, logger: Logger) -> IngestEntsoeLoad:
@@ -72,3 +78,31 @@ def build_ingest_weather(settings: Settings, *, logger: Logger) -> IngestWeather
         clock=SystemClock(),
         logger=logger,
     )
+
+
+def build_run_feature_engineering(
+    settings: Settings,
+) -> Callable[[Path | None], Path]:
+    """Return a partially-applied feature engineering runner.
+
+    The returned closure captures the on-disk paths derived from
+    ``settings.local_data_root`` (load JSONL dir, weather JSONL dir, and
+    a default Parquet output path). Callers can override the output path
+    per invocation; everything else is fixed at composition time.
+
+    The feature engineering pipeline has no ports/adapters to wire — it
+    is a self-contained Kedro DAG — but going through composition keeps
+    every CLI command's path uniform: settings → wired callable.
+    """
+    load_directory = settings.local_data_root / "load_observations"
+    weather_directory = settings.local_data_root / "weather_readings"
+    default_output = settings.local_data_root / "features.parquet"
+
+    def _run(output_path: Path | None = None) -> Path:
+        return run_feature_engineering(
+            load_directory=load_directory,
+            weather_directory=weather_directory,
+            output_path=output_path or default_output,
+        )
+
+    return _run

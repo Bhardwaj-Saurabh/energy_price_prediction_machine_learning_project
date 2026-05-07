@@ -9,6 +9,7 @@ directly.
 
 from pathlib import Path
 
+import pytest
 from pydantic import SecretStr
 
 from energy_forecaster.adapters.clock.system_clock import SystemClock
@@ -29,6 +30,7 @@ from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
+    build_run_feature_engineering,
 )
 from energy_forecaster.config.settings import Environment, Settings
 from tests.unit.application.fakes import FakeLogger
@@ -95,3 +97,77 @@ def test_weather_source_open_meteo_picks_real_client(tmp_path: Path) -> None:
     )
     use_case = build_ingest_weather(settings, logger=FakeLogger())
     assert isinstance(use_case._weather, OpenMeteoClient)
+
+
+def test_build_run_feature_engineering_returns_callable_with_default_paths(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+    )
+    runner = build_run_feature_engineering(settings)
+
+    # The returned callable should accept None and use a default output
+    # path under local_data_root. We don't actually invoke it here (no
+    # input JSONL exists yet); the integration test in
+    # tests/integration/pipelines/feature_engineering covers execution.
+    assert callable(runner)
+
+
+def test_build_run_feature_engineering_default_output_under_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Probe the default-output behaviour by stubbing run_feature_engineering
+    # at its import site in composition and asserting the paths the
+    # closure forwards. monkeypatch via dotted-string path keeps mypy
+    # strict's no_implicit_reexport happy.
+    captured: dict[str, Path] = {}
+
+    def _stub(
+        *,
+        load_directory: Path,
+        weather_directory: Path,
+        output_path: Path,
+    ) -> Path:
+        captured["load"] = load_directory
+        captured["weather"] = weather_directory
+        captured["output"] = output_path
+        return output_path
+
+    monkeypatch.setattr("energy_forecaster.composition.run_feature_engineering", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+    )
+    build_run_feature_engineering(settings)(None)
+
+    assert captured["load"] == tmp_path / "load_observations"
+    assert captured["weather"] == tmp_path / "weather_readings"
+    assert captured["output"] == tmp_path / "features.parquet"
+
+
+def test_build_run_feature_engineering_explicit_output_overrides_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Path] = {}
+
+    def _stub(
+        *,
+        load_directory: Path,
+        weather_directory: Path,
+        output_path: Path,
+    ) -> Path:
+        captured["output"] = output_path
+        return output_path
+
+    monkeypatch.setattr("energy_forecaster.composition.run_feature_engineering", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+    )
+
+    explicit = tmp_path / "elsewhere" / "fm.parquet"
+    build_run_feature_engineering(settings)(explicit)
+
+    assert captured["output"] == explicit

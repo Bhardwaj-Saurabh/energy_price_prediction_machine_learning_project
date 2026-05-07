@@ -309,6 +309,113 @@ class TestWeatherSubcommand:
         assert "simulated weather outage" in capsys.readouterr().err
 
 
+class TestFeaturesSubcommand:
+    """End-to-end checks for ``energy-forecaster features``.
+
+    Each test stages JSONL inputs under the configured data root, runs
+    the CLI, and asserts on both the printed result and the Parquet
+    output. The fixture's ``EF_LOCAL_DATA_ROOT=tmp_path`` is what makes
+    these runs hermetic.
+    """
+
+    @staticmethod
+    def _seed_jsonl(tmp_path: Path, hours: int = 200) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        load_dir = tmp_path / "load_observations"
+        weather_dir = tmp_path / "weather_readings"
+        load_dir.mkdir(parents=True, exist_ok=True)
+        weather_dir.mkdir(parents=True, exist_ok=True)
+        start = datetime(2026, 5, 4, tzinfo=UTC)
+
+        with (load_dir / "DE_LU.jsonl").open("w", encoding="utf-8") as f:
+            for h in range(hours):
+                ts = (start + timedelta(hours=h)).isoformat()
+                f.write(
+                    json.dumps(
+                        {
+                            "zone": "DE_LU",
+                            "timestamp_utc": ts,
+                            "load": 50_000.0 + 100.0 * h,
+                        }
+                    )
+                    + "\n"
+                )
+        with (weather_dir / "DE_LU.jsonl").open("w", encoding="utf-8") as f:
+            for h in range(hours):
+                ts = (start + timedelta(hours=h)).isoformat()
+                f.write(
+                    json.dumps(
+                        {
+                            "zone": "DE_LU",
+                            "timestamp_utc": ts,
+                            "temp_c": 15.0,
+                            "wind_10m_ms": 4.0,
+                            "wind_100m_ms": 8.0,
+                            "ghi_wm2": 300.0,
+                            "cloud_cover_pct": 50.0,
+                            "precip_mm": 0.0,
+                        }
+                    )
+                    + "\n"
+                )
+
+    def test_default_output_path_under_data_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._seed_jsonl(tmp_path)
+
+        exit_code = main(["features"])
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Feature engineering complete" in captured.out
+        assert "Rows:      200" in captured.out
+        assert (tmp_path / "features.parquet").exists()
+
+    def test_explicit_output_path_is_respected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._seed_jsonl(tmp_path)
+        custom = tmp_path / "subdir" / "my_features.parquet"
+
+        exit_code = main(["features", "--output", str(custom)])
+
+        assert exit_code == 0
+        assert custom.exists()
+        # Default location should NOT exist when --output is set.
+        assert not (tmp_path / "features.parquet").exists()
+
+    def test_pipeline_failure_returns_exit_one(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Inject a runner that raises — simulates a Pandera / Kedro /
+        # filesystem error path. The CLI must catch, log, and return 1
+        # rather than letting the stack trace escape to the user.
+        from collections.abc import Callable
+
+        def _failing(output_path: Path | None = None) -> Path:
+            raise RuntimeError("simulated pipeline failure")
+
+        def _build_failing_runner(
+            settings: object,
+        ) -> Callable[[Path | None], Path]:
+            return _failing
+
+        monkeypatch.setattr(
+            "energy_forecaster.cli.build_run_feature_engineering",
+            _build_failing_runner,
+        )
+
+        exit_code = main(["features"])
+
+        assert exit_code == 1
+        assert "simulated pipeline failure" in capsys.readouterr().err
+
+
 class TestTimestampParsing:
     def test_full_iso_with_offset_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
         exit_code = main(
