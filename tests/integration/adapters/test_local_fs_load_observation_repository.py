@@ -8,7 +8,7 @@ import pytest
 
 from energy_forecaster.adapters.load_observation_repo.local_fs import (
     LocalFsLoadObservationRepository,
-    _deserialise,
+    deserialise,
 )
 from energy_forecaster.application.ports.load_observation_repository import (
     LoadObservationRepository,
@@ -38,7 +38,7 @@ def _hourly_load(
 
 
 def _read_file(path: Path) -> list[LoadObservation]:
-    return [_deserialise(line) for line in path.read_text("utf-8").splitlines() if line]
+    return [deserialise(line) for line in path.read_text("utf-8").splitlines() if line]
 
 
 class TestConstructorBehaviour:

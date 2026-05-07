@@ -7,7 +7,7 @@ import pytest
 
 from energy_forecaster.adapters.weather_reading_repo.local_fs import (
     LocalFsWeatherReadingRepository,
-    _deserialise,
+    deserialise,
 )
 from energy_forecaster.application.ports.weather_reading_repository import (
     WeatherReadingRepository,
@@ -39,7 +39,7 @@ def _hourly_weather(zone: BiddingZone, start: datetime, hours: int) -> list[Weat
 
 
 def _read_file(path: Path) -> list[WeatherReading]:
-    return [_deserialise(line) for line in path.read_text("utf-8").splitlines() if line]
+    return [deserialise(line) for line in path.read_text("utf-8").splitlines() if line]
 
 
 class TestConstructorBehaviour:

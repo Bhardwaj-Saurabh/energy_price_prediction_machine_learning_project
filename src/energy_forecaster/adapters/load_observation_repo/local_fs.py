@@ -100,8 +100,13 @@ def _serialise(obs: LoadObservation) -> str:
     )
 
 
-def _deserialise(line: str) -> LoadObservation:
-    """Inverse of :func:`_serialise`. Used by tests; not part of the port API."""
+def deserialise(line: str) -> LoadObservation:
+    """Parse one JSONL line into a :class:`LoadObservation`.
+
+    Public so the feature-engineering pipeline (and tests) can read what
+    this adapter wrote. The reverse direction of :func:`_serialise` —
+    keep them in sync if either side ever changes.
+    """
     record = json.loads(line)
     return LoadObservation(
         zone=BiddingZone(record["zone"]),

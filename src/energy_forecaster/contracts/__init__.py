@@ -6,6 +6,7 @@ silent dtype drift or duplicate keys are caught at the producer, not at
 the consumer.
 """
 
+from energy_forecaster.contracts.feature_matrix_schema import FeatureMatrixSchema
 from energy_forecaster.contracts.load_observation_schema import (
     LoadObservationSchema,
     to_load_dataframe,
@@ -16,6 +17,7 @@ from energy_forecaster.contracts.weather_reading_schema import (
 )
 
 __all__ = [
+    "FeatureMatrixSchema",
     "LoadObservationSchema",
     "WeatherReadingSchema",
     "to_load_dataframe",

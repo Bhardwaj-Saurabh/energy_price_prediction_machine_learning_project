@@ -79,8 +79,9 @@ def _serialise(r: WeatherReading) -> str:
     )
 
 
-def _deserialise(line: str) -> WeatherReading:
-    """Inverse of :func:`_serialise`. Used by tests; not part of the port API."""
+def deserialise(line: str) -> WeatherReading:
+    """Parse one JSONL line into a :class:`WeatherReading`. Public so the
+    feature-engineering pipeline can read what this adapter wrote."""
     record = json.loads(line)
     return WeatherReading(
         zone=BiddingZone(record["zone"]),

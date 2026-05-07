@@ -36,6 +36,16 @@ dependencies = [
     # pandera[pandas] — schema validation for DataFrames. The contracts/
     # package owns this; nothing else imports pandera directly.
     "pandera[pandas]>=0.20.0",
+    # kedro — DAG-shaped pipeline framework. Confined to
+    # ``src/energy_forecaster/pipelines/``. We use Kedro as a *library*
+    # (Pipeline, node, DataCatalog, SequentialRunner) rather than as a
+    # project framework — no kedro init, no project-level conventions.
+    "kedro>=0.19.0",
+    # kedro-datasets — split out from Kedro core in 1.x. The pandas
+    # extra provides ParquetDataset / CSVDataset / etc.
+    "kedro-datasets[pandas]>=8.0.0",
+    # pyarrow — Parquet reader/writer for the feature matrix output.
+    "pyarrow>=18.0.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -115,7 +125,14 @@ pretty = true
 # safety stays at the boundary. We can revisit (e.g. add pandas-stubs) if
 # adapter complexity grows.
 [[tool.mypy.overrides]]
-module = ["entsoe", "entsoe.*", "pandas", "pandas.*"]
+module = [
+    "entsoe",
+    "entsoe.*",
+    "pandas",
+    "pandas.*",
+    "kedro_datasets",
+    "kedro_datasets.*",
+]
 ignore_missing_imports = true
 
 # requests ships its own type hints since 2.32, so no override needed —
