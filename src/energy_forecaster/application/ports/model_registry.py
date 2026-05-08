@@ -43,5 +43,36 @@ class ModelRegistry(Protocol):
         layer does not type-narrow it — that is the caller's
         responsibility, and it stays an implementation detail of the
         chosen adapter / model flavour.
+
+        Implementations should accept both run-id-form versions
+        (``<name>@<run_id>``) and alias-form versions (``<name>@<alias>``,
+        e.g. ``demand_forecaster@champion``).
+        """
+        ...
+
+    def get_alias(self, registered_name: str, alias: str) -> ModelVersion | None:
+        """Resolve an alias to its current version, or None if unset.
+
+        Used by the training runner to answer 'who is the current
+        champion?' before deciding whether to promote a challenger.
+        """
+        ...
+
+    def get_metric(self, version: ModelVersion, metric_key: str) -> float | None:
+        """Return the value of ``metric_key`` for the given version, or None.
+
+        Used to compare a challenger's MAPE against the existing
+        champion's. ``None`` is returned when the version exists but
+        the metric was never logged on it — defensive case for legacy
+        models that pre-date the metric.
+        """
+        ...
+
+    def set_alias(self, registered_name: str, alias: str, version: ModelVersion) -> None:
+        """Point ``alias`` at ``version`` for ``registered_name``.
+
+        Used by the promotion step to install a winning challenger as
+        the new champion. Idempotent — setting an alias that is already
+        pointing at the given version is a no-op.
         """
         ...

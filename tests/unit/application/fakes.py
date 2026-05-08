@@ -213,6 +213,8 @@ class FakeModelRegistry:
     calls: list[_RegistryCall] = field(default_factory=list)
     next_version: str = "fake_model@v1"
     _models: dict[str, Any] = field(default_factory=dict)
+    _metrics: dict[str, dict[str, float]] = field(default_factory=dict)
+    _aliases: dict[tuple[str, str], ModelVersion] = field(default_factory=dict)
 
     def register(
         self,
@@ -231,18 +233,56 @@ class FakeModelRegistry:
         )
         version = ModelVersion(self.next_version)
         self._models[version.value] = model
+        self._metrics[version.value] = dict(metrics)
         return version
 
     def load(self, version: ModelVersion) -> Any:
+        # If the version is alias-form (no model stored under that
+        # exact key), resolve via the alias map first.
         if version.value not in self._models:
-            raise KeyError(f"FakeModelRegistry has no model for {version.value!r}")
+            try:
+                name, suffix = version.value.split("@", 1)
+            except ValueError as exc:
+                raise KeyError(f"FakeModelRegistry has no model for {version.value!r}") from exc
+            resolved = self._aliases.get((name, suffix))
+            if resolved is None:
+                raise KeyError(f"FakeModelRegistry has no model for {version.value!r}")
+            return self._models[resolved.value]
         return self._models[version.value]
+
+    def get_alias(self, registered_name: str, alias: str) -> ModelVersion | None:
+        return self._aliases.get((registered_name, alias))
+
+    def get_metric(self, version: ModelVersion, metric_key: str) -> float | None:
+        # Resolve alias to the underlying version first.
+        resolved_key = version.value
+        if resolved_key not in self._metrics:
+            try:
+                name, suffix = version.value.split("@", 1)
+                resolved = self._aliases.get((name, suffix))
+                if resolved is not None:
+                    resolved_key = resolved.value
+            except ValueError:
+                pass
+        metrics = self._metrics.get(resolved_key)
+        if metrics is None:
+            return None
+        return metrics.get(metric_key)
+
+    def set_alias(self, registered_name: str, alias: str, version: ModelVersion) -> None:
+        self._aliases[(registered_name, alias)] = version
 
     def preload(self, version: ModelVersion, model: Any) -> None:
         """Test helper: pre-register a (version, model) pair without
         going through register(). Useful when the test only needs to
         exercise the load path."""
         self._models[version.value] = model
+
+    def preload_metric(self, version: ModelVersion, key: str, value: float) -> None:
+        """Test helper: attach a metric to a version that was
+        ``preload()``ed rather than registered. Useful for setting up
+        a champion's MAPE without running training."""
+        self._metrics.setdefault(version.value, {})[key] = value
 
 
 @dataclass

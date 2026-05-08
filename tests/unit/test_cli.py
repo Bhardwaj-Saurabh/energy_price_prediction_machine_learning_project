@@ -447,6 +447,8 @@ class TestTrainSubcommand:
                 train_size=80,
                 test_size=20,
                 test_mape=0.07,
+                promoted=True,
+                previous_champion=None,
                 started_at=now,
                 finished_at=now,
             )
@@ -463,6 +465,75 @@ class TestTrainSubcommand:
         assert "Training complete" in captured.out
         assert "test_model@v1" in captured.out
         assert "Test MAPE:     0.0700" in captured.out
+        assert "promoted to @champion (inaugural)" in captured.out
+
+    def test_promoted_against_existing_incumbent_shows_previous(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.model_version import (
+            ModelVersion,
+        )
+        from energy_forecaster.pipelines.training.runner import TrainingResult
+
+        def _runner(features_path: Path | None = None) -> TrainingResult:
+            now = datetime(2026, 5, 7, 12, tzinfo=UTC)
+            return TrainingResult(
+                model_version=ModelVersion("test_model@v_new"),
+                train_size=80,
+                test_size=20,
+                test_mape=0.05,
+                promoted=True,
+                previous_champion=ModelVersion("test_model@v_old"),
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(settings: object) -> Callable[[Path | None], TrainingResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_training", _build)
+        assert main(["train"]) == 0
+        out = capsys.readouterr().out
+        assert "promoted to @champion (was test_model@v_old)" in out
+
+    def test_not_promoted_shows_incumbent_kept_alias(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.model_version import (
+            ModelVersion,
+        )
+        from energy_forecaster.pipelines.training.runner import TrainingResult
+
+        def _runner(features_path: Path | None = None) -> TrainingResult:
+            now = datetime(2026, 5, 7, 12, tzinfo=UTC)
+            return TrainingResult(
+                model_version=ModelVersion("test_model@v_loser"),
+                train_size=80,
+                test_size=20,
+                test_mape=0.20,
+                promoted=False,
+                previous_champion=ModelVersion("test_model@v_old"),
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(settings: object) -> Callable[[Path | None], TrainingResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_training", _build)
+        assert main(["train"]) == 0
+        out = capsys.readouterr().out
+        assert "no — incumbent test_model@v_old kept @champion" in out
 
     def test_runner_failure_returns_exit_one(
         self,

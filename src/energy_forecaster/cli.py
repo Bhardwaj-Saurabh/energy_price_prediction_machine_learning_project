@@ -154,11 +154,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     predict.add_argument(
         "--model",
-        required=True,
         type=str,
+        default="demand_forecaster@champion",
         help=(
-            "Model version to load — copy from the `train` output, e.g. "
-            "'demand_forecaster@1910843f6ad74142ba0d8e5ad2923581'."
+            "Model version to load. Accepts both run-id form "
+            "('demand_forecaster@<run_id>') and alias form "
+            "('demand_forecaster@champion'). Defaults to "
+            "'demand_forecaster@champion' — the alias the training "
+            "runner sets when promoting a winning challenger."
         ),
     )
     predict.add_argument(
@@ -311,6 +314,10 @@ def _run_train(args: argparse.Namespace, *, settings: Settings, logger: Logger) 
         test_mape=result.test_mape,
         train_size=result.train_size,
         test_size=result.test_size,
+        promoted=result.promoted,
+        previous_champion=(
+            result.previous_champion.value if result.previous_champion is not None else None
+        ),
         duration_seconds=round(result.duration_seconds, 3),
     )
     _print_training_result(result)
@@ -356,6 +363,14 @@ def _print_training_result(result: TrainingResult) -> None:
     print(f"  Train rows:    {result.train_size}")
     print(f"  Test rows:     {result.test_size}")
     print(f"  Test MAPE:     {result.test_mape:.4f}")
+    if result.promoted:
+        if result.previous_champion is None:
+            print("  Promotion:     promoted to @champion (inaugural)")
+        else:
+            print(f"  Promotion:     promoted to @champion (was {result.previous_champion.value})")
+    else:
+        prev = result.previous_champion.value if result.previous_champion is not None else "<none>"
+        print(f"  Promotion:     no — incumbent {prev} kept @champion")
     print(f"  Started at:    {result.started_at.isoformat()}")
     print(f"  Finished at:   {result.finished_at.isoformat()}")
     print(f"  Duration:      {result.duration_seconds:.3f} s")

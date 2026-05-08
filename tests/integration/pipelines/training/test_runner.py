@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from energy_forecaster.pipelines.training.runner import run_training
 from tests.unit.application.fakes import FakeModelRegistry
 
@@ -66,3 +67,81 @@ class TestRunTraining:
         assert call.registered_name == "demand_forecaster"
         assert call.params["objective"] == "regression"
         assert "mape" in call.metrics
+
+
+class TestPromotion:
+    """Champion/challenger logic, isolated to the runner.
+
+    The decision rule (``should_promote``) lives in domain code and is
+    tested separately. These tests confirm the runner's *plumbing*
+    around it: query registry → invoke rule → set alias accordingly.
+    """
+
+    def test_first_run_promotes_inaugural_champion(self, tmp_path: Path) -> None:
+        # No existing alias means the first model becomes champion
+        # automatically — no comparison needed.
+        features_path = tmp_path / "features.parquet"
+        _write_features_parquet(features_path, hours=400)
+        registry = FakeModelRegistry(next_version="demand_forecaster@v1")
+
+        result = run_training(features_path=features_path, registry=registry)
+
+        assert result.promoted is True
+        assert result.previous_champion is None
+        assert registry.get_alias("demand_forecaster", "champion") == result.model_version
+
+    def test_challenger_better_by_margin_promotes(self, tmp_path: Path) -> None:
+        # Pre-seed an existing champion with a clearly worse MAPE.
+        # The new run's MAPE should beat it by more than the 0.5pp delta
+        # → promote.
+        features_path = tmp_path / "features.parquet"
+        _write_features_parquet(features_path, hours=400)
+        registry = FakeModelRegistry(next_version="demand_forecaster@v_new")
+        incumbent = ModelVersion("demand_forecaster@v_old")
+        registry.preload(incumbent, object())  # opaque model
+        registry.preload_metric(incumbent, "mape", 0.10)  # 10% MAPE
+        registry.set_alias("demand_forecaster", "champion", incumbent)
+
+        result = run_training(features_path=features_path, registry=registry)
+
+        # Synthetic data is easy to fit, so test_mape << 0.10 — the
+        # challenger should win by far more than 0.5pp.
+        assert result.test_mape < 0.10
+        assert result.promoted is True
+        assert result.previous_champion == incumbent
+        assert registry.get_alias("demand_forecaster", "champion") == result.model_version
+
+    def test_challenger_worse_does_not_promote(self, tmp_path: Path) -> None:
+        # Pre-seed a champion with a near-zero MAPE the new run cannot
+        # beat. The new model should NOT take @champion.
+        features_path = tmp_path / "features.parquet"
+        _write_features_parquet(features_path, hours=400)
+        registry = FakeModelRegistry(next_version="demand_forecaster@v_new")
+        incumbent = ModelVersion("demand_forecaster@v_old")
+        registry.preload(incumbent, object())
+        registry.preload_metric(incumbent, "mape", 0.0001)  # absurdly good
+        registry.set_alias("demand_forecaster", "champion", incumbent)
+
+        result = run_training(features_path=features_path, registry=registry)
+
+        assert result.promoted is False
+        assert result.previous_champion == incumbent
+        # Champion alias is unchanged.
+        assert registry.get_alias("demand_forecaster", "champion") == incumbent
+
+    def test_incumbent_with_no_metric_is_replaced(self, tmp_path: Path) -> None:
+        # Defensive case: incumbent exists but has no MAPE recorded
+        # (legacy model from before the metric was tracked). The runner
+        # treats the challenger as automatically better.
+        features_path = tmp_path / "features.parquet"
+        _write_features_parquet(features_path, hours=400)
+        registry = FakeModelRegistry(next_version="demand_forecaster@v_new")
+        incumbent = ModelVersion("demand_forecaster@v_old")
+        registry.preload(incumbent, object())
+        # NOTE: no preload_metric call — incumbent has no MAPE.
+        registry.set_alias("demand_forecaster", "champion", incumbent)
+
+        result = run_training(features_path=features_path, registry=registry)
+
+        assert result.promoted is True
+        assert result.previous_champion == incumbent
