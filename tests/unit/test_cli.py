@@ -636,6 +636,166 @@ class TestPredictSubcommand:
         assert "simulated inference failure" in capsys.readouterr().err
 
 
+class TestMonitorSubcommand:
+    """End-to-end checks for ``energy-forecaster monitor``.
+
+    The real runner reads the feature parquet and the load forecast /
+    observation JSONLs from disk; we monkeypatch it for hermetic
+    CLI-level tests. The integration test in
+    ``tests/integration/pipelines/monitoring/`` covers the real path.
+    """
+
+    def test_runs_via_fake_runner_and_returns_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.mape import MAPE
+        from energy_forecaster.pipelines.monitoring.runner import MonitoringResult
+
+        captured: dict[str, object] = {}
+
+        def _runner(features: Path | None = None, recent_hours: int = 168) -> MonitoringResult:
+            captured["features"] = features
+            captured["recent_hours"] = recent_hours
+            now = datetime(2026, 5, 8, 12, tzinfo=UTC)
+            return MonitoringResult(
+                rolling_mape_by_zone={"DE_LU": 0.018, "FR": 0.022},
+                psi_by_feature={"temp_c": 0.05, "wind_10m_ms": 0.03},
+                max_rolling_mape=MAPE(0.022),
+                max_psi=0.05,
+                retrain_recommended=False,
+                window_start=now,
+                window_end=now,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(
+            settings: object,
+        ) -> Callable[[Path | None, int], MonitoringResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_monitoring", _build)
+
+        exit_code = main(["monitor"])
+
+        assert exit_code == 0
+        captured_out = capsys.readouterr().out
+        assert "Monitoring complete" in captured_out
+        # Both per-zone MAPE values appear; the verdict is "no action".
+        assert "DE_LU" in captured_out
+        assert "FR" in captured_out
+        assert "no action" in captured_out
+        # Defaults from the parser flow through.
+        assert captured["features"] is None
+        assert captured["recent_hours"] == 168
+
+    def test_retrain_verdict_is_printed_when_recommended(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.mape import MAPE
+        from energy_forecaster.pipelines.monitoring.runner import MonitoringResult
+
+        def _runner(features: Path | None = None, recent_hours: int = 168) -> MonitoringResult:
+            now = datetime(2026, 5, 8, 12, tzinfo=UTC)
+            return MonitoringResult(
+                rolling_mape_by_zone={"DE_LU": 0.10},
+                psi_by_feature={"temp_c": 0.30},
+                max_rolling_mape=MAPE(0.10),
+                max_psi=0.30,
+                retrain_recommended=True,
+                window_start=now,
+                window_end=now,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(
+            settings: object,
+        ) -> Callable[[Path | None, int], MonitoringResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_monitoring", _build)
+
+        exit_code = main(["monitor", "--recent-hours", "72"])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "RETRAIN" in out
+
+    def test_runner_failure_returns_exit_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+
+        from energy_forecaster.pipelines.monitoring.runner import MonitoringResult
+
+        def _runner(features: Path | None = None, recent_hours: int = 168) -> MonitoringResult:
+            raise RuntimeError("simulated monitoring failure")
+
+        def _build(
+            settings: object,
+        ) -> Callable[[Path | None, int], MonitoringResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_monitoring", _build)
+
+        exit_code = main(["monitor"])
+
+        assert exit_code == 1
+        assert "simulated monitoring failure" in capsys.readouterr().err
+
+    def test_empty_signals_print_fallback_messages(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.mape import MAPE
+        from energy_forecaster.pipelines.monitoring.runner import MonitoringResult
+
+        def _runner(features: Path | None = None, recent_hours: int = 168) -> MonitoringResult:
+            now = datetime(2026, 5, 8, 12, tzinfo=UTC)
+            return MonitoringResult(
+                rolling_mape_by_zone={},
+                psi_by_feature={},
+                max_rolling_mape=MAPE(0.0),
+                max_psi=0.0,
+                retrain_recommended=False,
+                window_start=now,
+                window_end=now,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(
+            settings: object,
+        ) -> Callable[[Path | None, int], MonitoringResult]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_monitoring", _build)
+
+        exit_code = main(["monitor"])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "<no matched truth pairs in window>" in out
+        assert "<not enough history to compute>" in out
+
+
 class TestTimestampParsing:
     def test_full_iso_with_offset_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
         exit_code = main(

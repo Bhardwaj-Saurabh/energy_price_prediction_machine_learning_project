@@ -37,12 +37,14 @@ from energy_forecaster.composition import (
     build_ingest_weather,
     build_run_feature_engineering,
     build_run_inference,
+    build_run_monitoring,
     build_run_training,
 )
 from energy_forecaster.config.settings import Settings, get_settings
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from energy_forecaster.pipelines.inference.runner import InferenceResult
+from energy_forecaster.pipelines.monitoring.runner import MonitoringResult
 from energy_forecaster.pipelines.training.runner import TrainingResult
 
 
@@ -70,6 +72,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_train(args, settings=settings, logger=logger)
     if args.command == "predict":
         return _run_predict(args, settings=settings, logger=logger)
+    if args.command == "monitor":
+        return _run_monitor(args, settings=settings, logger=logger)
     if args.command == "serve":
         return _run_serve(args, settings=settings, logger=logger)
 
@@ -180,6 +184,34 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=24,
         help="How many of the most recent hours to predict per zone (default 24).",
+    )
+
+    monitor = subparsers.add_parser(
+        "monitor",
+        help="Compute drift signals and emit a retrain verdict.",
+        description=(
+            "Run the monitoring pipeline: rolling MAPE per zone "
+            "(performance drift) and per-feature PSI (data drift). "
+            "Applies the should_retrain rule and prints the verdict. "
+            "Does not retrain — that is the orchestrator's job."
+        ),
+    )
+    monitor.add_argument(
+        "--features",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the feature matrix Parquet. Defaults to <EF_LOCAL_DATA_ROOT>/features.parquet."
+        ),
+    )
+    monitor.add_argument(
+        "--recent-hours",
+        type=int,
+        default=168,
+        help=(
+            "Window size in hours for both the rolling MAPE and the "
+            "PSI recent slice. Defaults to 168 (one week)."
+        ),
     )
 
     serve = subparsers.add_parser(
@@ -436,6 +468,64 @@ def _print_inference_result(result: InferenceResult) -> None:
     print(f"  Model version:        {result.model_version.value}")
     print(f"  Forecasts produced:   {result.forecasts_produced}")
     print(f"  Forecasts inserted:   {result.forecasts_inserted}")
+    print(f"  Started at:           {result.started_at.isoformat()}")
+    print(f"  Finished at:          {result.finished_at.isoformat()}")
+    print(f"  Duration:             {result.duration_seconds:.3f} s")
+
+
+def _run_monitor(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    runner = build_run_monitoring(settings)
+    log = logger.bind(operation="monitor")
+    log.info(
+        "monitor.start",
+        features=str(args.features) if args.features else "default",
+        recent_hours=args.recent_hours,
+    )
+
+    try:
+        result = runner(args.features, args.recent_hours)
+    except Exception as exc:
+        # Same boundary-catch policy as features/predict: pyarrow,
+        # filesystem, or numerical errors become a clean exit-code-1
+        # outcome with a logged error type.
+        log.error("monitor.failed", error=str(exc), error_type=type(exc).__name__)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    log.info(
+        "monitor.done",
+        max_rolling_mape=result.max_rolling_mape.value,
+        max_psi=result.max_psi,
+        retrain_recommended=result.retrain_recommended,
+        duration_seconds=round(result.duration_seconds, 3),
+    )
+    _print_monitoring_result(result)
+    return 0
+
+
+def _print_monitoring_result(result: MonitoringResult) -> None:
+    print("Monitoring complete:")
+    print(
+        "  Window:               "
+        f"{result.window_start.isoformat()} -> {result.window_end.isoformat()}"
+    )
+    if result.rolling_mape_by_zone:
+        print("  Rolling MAPE by zone:")
+        for zone, value in sorted(result.rolling_mape_by_zone.items()):
+            print(f"    {zone:6s} {value:.4f}")
+    else:
+        print("  Rolling MAPE by zone: <no matched truth pairs in window>")
+    if result.psi_by_feature:
+        print("  PSI by feature (top 5):")
+        ranked = sorted(result.psi_by_feature.items(), key=lambda kv: kv[1], reverse=True)
+        for feature, value in ranked[:5]:
+            print(f"    {feature:20s} {value:.4f}")
+    else:
+        print("  PSI by feature:       <not enough history to compute>")
+    print(f"  Max rolling MAPE:     {result.max_rolling_mape.value:.4f}")
+    print(f"  Max PSI:              {result.max_psi:.4f}")
+    verdict = "RETRAIN" if result.retrain_recommended else "no action"
+    print(f"  Verdict:              {verdict}")
     print(f"  Started at:           {result.started_at.isoformat()}")
     print(f"  Finished at:          {result.finished_at.isoformat()}")
     print(f"  Duration:             {result.duration_seconds:.3f} s")

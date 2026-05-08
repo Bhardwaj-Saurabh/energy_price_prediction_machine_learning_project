@@ -38,6 +38,7 @@ from energy_forecaster.composition import (
     build_ingest_weather,
     build_run_feature_engineering,
     build_run_inference,
+    build_run_monitoring,
     build_run_training,
 )
 from energy_forecaster.config.settings import Environment, Settings
@@ -285,3 +286,56 @@ def test_build_run_inference_wires_registry_and_repo(
     assert isinstance(captured_version, ModelVersion)
     assert captured_version.value == "demand_forecaster@v1"
     assert captured["hours"] == 12
+
+
+def test_build_run_monitoring_returns_callable(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+    )
+    runner = build_run_monitoring(settings)
+    assert callable(runner)
+
+
+def test_build_run_monitoring_wires_repos_and_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stub run_monitoring at its import site in composition and capture
+    # everything the closure forwards. Confirms both repos are the
+    # LocalFs adapters, the clock is the SystemClock, and the default
+    # features path / recent_hours flow through.
+    captured: dict[str, object] = {}
+
+    def _stub(
+        *,
+        features_path: Path,
+        forecast_repo: object,
+        observation_repo: object,
+        clock: object,
+        recent_hours: int,
+    ) -> object:
+        captured["features_path"] = features_path
+        captured["forecast_repo"] = forecast_repo
+        captured["observation_repo"] = observation_repo
+        captured["clock"] = clock
+        captured["recent_hours"] = recent_hours
+
+        class _StubResult:
+            retrain_recommended = False
+
+        return _StubResult()
+
+    monkeypatch.setattr("energy_forecaster.composition.run_monitoring", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+    )
+
+    runner = build_run_monitoring(settings)
+    runner(None, 72)
+
+    assert isinstance(captured["forecast_repo"], LocalFsLoadForecastRepository)
+    assert isinstance(captured["observation_repo"], LocalFsLoadObservationRepository)
+    assert isinstance(captured["clock"], SystemClock)
+    assert captured["features_path"] == tmp_path / "features.parquet"
+    assert captured["recent_hours"] == 72

@@ -57,6 +57,10 @@ from energy_forecaster.pipelines.inference.runner import (
     InferenceResult,
     run_inference,
 )
+from energy_forecaster.pipelines.monitoring.runner import (
+    MonitoringResult,
+    run_monitoring,
+)
 from energy_forecaster.pipelines.training.runner import (
     TrainingResult,
     run_training,
@@ -177,6 +181,36 @@ def build_run_inference(
             clock=clock,
             model_version=model_version,
             hours=hours,
+        )
+
+    return _run
+
+
+def build_run_monitoring(
+    settings: Settings,
+) -> Callable[[Path | None, int], MonitoringResult]:
+    """Return a partially-applied monitoring runner.
+
+    Captures the LocalFs forecast and observation repos, the system
+    clock, and the default features path. The caller can override the
+    features path and the recent-window size per invocation; the rest
+    is fixed at composition time.
+    """
+    default_features = settings.local_data_root / "features.parquet"
+    forecast_repo = LocalFsLoadForecastRepository(root=settings.local_data_root)
+    observation_repo = LocalFsLoadObservationRepository(root=settings.local_data_root)
+    clock = SystemClock()
+
+    def _run(
+        features_path: Path | None = None,
+        recent_hours: int = 168,
+    ) -> MonitoringResult:
+        return run_monitoring(
+            features_path=features_path or default_features,
+            forecast_repo=forecast_repo,
+            observation_repo=observation_repo,
+            clock=clock,
+            recent_hours=recent_hours,
         )
 
     return _run
