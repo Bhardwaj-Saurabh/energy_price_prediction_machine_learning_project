@@ -267,3 +267,63 @@ class TestErrorTranslation:
                     end=_utc(2026, 5, 5),
                 )
             )
+
+
+class TestFetchForecast:
+    def test_calls_forecast_url_with_hour_level_window(self, http: _RecordingHTTP) -> None:
+        # Forecast endpoint takes ``start_hour`` / ``end_hour`` (not
+        # ``start_date`` / ``end_date``). Locking the request shape in
+        # here makes any future API change visible in a diff.
+        http.response = _FakeResponse(_full_payload(["2026-05-09T00:00"]))
+        client = OpenMeteoClient()
+
+        list(
+            client.fetch_forecast(
+                zone=BiddingZone.DE_LU,
+                start=_utc(2026, 5, 9, 0),
+                end=_utc(2026, 5, 9, 1),
+            )
+        )
+
+        assert len(http.calls) == 1
+        call = http.calls[0]
+        assert call["url"] == "https://api.open-meteo.com/v1/forecast"
+        assert call["params"]["start_hour"] == "2026-05-09T00:00"
+        assert call["params"]["end_hour"] == "2026-05-09T01:00"
+        assert call["params"]["latitude"] == 50.11
+        assert call["params"]["longitude"] == 8.68
+        assert call["params"]["timezone"] == "UTC"
+
+    def test_payload_rows_become_weather_readings(self, http: _RecordingHTTP) -> None:
+        # The parsing path is shared with fetch_weather, but locking
+        # in a forecast-specific test makes any divergence land here.
+        http.response = _FakeResponse(_full_payload(["2026-05-09T00:00", "2026-05-09T01:00"]))
+        client = OpenMeteoClient()
+
+        readings = list(
+            client.fetch_forecast(
+                zone=BiddingZone.FR,
+                start=_utc(2026, 5, 9, 0),
+                end=_utc(2026, 5, 9, 2),
+            )
+        )
+
+        assert len(readings) == 2
+        assert all(r.zone is BiddingZone.FR for r in readings)
+        assert [r.timestamp_utc for r in readings] == [
+            _utc(2026, 5, 9, 0),
+            _utc(2026, 5, 9, 1),
+        ]
+
+    def test_request_exception_becomes_data_source_unavailable(self, http: _RecordingHTTP) -> None:
+        http.raise_exception = RuntimeError("forecast api timeout")
+        client = OpenMeteoClient()
+
+        with pytest.raises(DataSourceUnavailableError, match="forecast api timeout"):
+            list(
+                client.fetch_forecast(
+                    zone=BiddingZone.DE_LU,
+                    start=_utc(2026, 5, 9),
+                    end=_utc(2026, 5, 10),
+                )
+            )

@@ -116,17 +116,23 @@ class FakeLoadObservationRepository:
 class FakeWeatherClient:
     """Predetermined-data weather stand-in.
 
-    Same shape as :class:`FakeEntsoeClient` — ``seed`` loads readings,
-    ``fail_on`` flips a zone into raising :class:`DataSourceUnavailableError`,
-    ``fetch_weather`` returns the half-open window subset.
+    Same shape as :class:`FakeEntsoeClient` — ``seed`` loads observed
+    readings, ``seed_forecast`` loads forecasted readings, ``fail_on``
+    flips a zone into raising :class:`DataSourceUnavailableError`. The
+    two fetch methods read from independent stores so a test can prime
+    one side without polluting the other.
     """
 
     def __init__(self) -> None:
         self._data: dict[BiddingZone, list[WeatherReading]] = {}
+        self._forecast: dict[BiddingZone, list[WeatherReading]] = {}
         self._fail_on_zone: BiddingZone | None = None
 
     def seed(self, zone: BiddingZone, readings: Iterable[WeatherReading]) -> None:
         self._data[zone] = list(readings)
+
+    def seed_forecast(self, zone: BiddingZone, readings: Iterable[WeatherReading]) -> None:
+        self._forecast[zone] = list(readings)
 
     def fail_on(self, zone: BiddingZone) -> None:
         self._fail_on_zone = zone
@@ -141,6 +147,17 @@ class FakeWeatherClient:
         if zone == self._fail_on_zone:
             raise DataSourceUnavailableError(f"Open-Meteo unavailable for {zone}")
         return [r for r in self._data.get(zone, []) if start <= r.timestamp_utc < end]
+
+    def fetch_forecast(
+        self,
+        *,
+        zone: BiddingZone,
+        start: datetime,
+        end: datetime,
+    ) -> Iterable[WeatherReading]:
+        if zone == self._fail_on_zone:
+            raise DataSourceUnavailableError(f"Open-Meteo unavailable for {zone}")
+        return [r for r in self._forecast.get(zone, []) if start <= r.timestamp_utc < end]
 
 
 class FakeWeatherReadingRepository:

@@ -16,7 +16,14 @@ class WeatherClient(Protocol):
     handles unit conversions, retries, and translates transport / parse
     failures into :class:`DataSourceUnavailableError`.
 
-    Window is half-open ``[start, end)`` to match every other ingest port.
+    Two methods, one entity. ``fetch_weather`` returns *observed*
+    readings (a measurement happened); ``fetch_forecast`` returns
+    *predicted* readings (a forecast model says it will). The data
+    shape is the same — same fields, same units — because the consumer
+    treats them the same. The distinction is the source, kept explicit
+    at the API surface so call sites declare which one they wanted.
+
+    Window is half-open ``[start, end)`` for both methods.
     """
 
     def fetch_weather(
@@ -26,7 +33,24 @@ class WeatherClient(Protocol):
         start: datetime,
         end: datetime,
     ) -> Iterable[WeatherReading]:
-        """Return readings for ``zone`` in the half-open window ``[start, end)``.
-        Both timestamps must be timezone-aware UTC.
+        """Return *observed* readings for ``zone`` in ``[start, end)``.
+
+        Both timestamps must be timezone-aware UTC and in the past
+        relative to the adapter's data source.
+        """
+        ...
+
+    def fetch_forecast(
+        self,
+        *,
+        zone: BiddingZone,
+        start: datetime,
+        end: datetime,
+    ) -> Iterable[WeatherReading]:
+        """Return *forecasted* readings for ``zone`` in ``[start, end)``.
+
+        Both timestamps must be timezone-aware UTC and in the future
+        relative to the adapter's data source. The horizon limit is
+        adapter-specific (Open-Meteo: 16 days).
         """
         ...

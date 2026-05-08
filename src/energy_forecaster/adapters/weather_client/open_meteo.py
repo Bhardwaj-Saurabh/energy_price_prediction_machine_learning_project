@@ -1,9 +1,9 @@
 """OpenMeteoClient — production weather adapter backed by Open-Meteo's free API.
 
 Open-Meteo serves historical and forecast weather without an API key.
-We hit the archive endpoint for closed past windows; future support for
-live forecast windows can land in a sibling adapter when the inference
-pipeline needs it.
+The archive endpoint (``archive-api...``) covers past windows; the
+forecast endpoint (``api...``) covers future windows up to 16 days
+ahead. Same hourly variables, same JSON shape — we reuse the parser.
 
 Boundary responsibilities (same template as :class:`EntsoePyClient`):
   * Map :class:`BiddingZone` to a representative lat/lon. One point per
@@ -39,6 +39,7 @@ _ZONE_LAT_LON: dict[BiddingZone, tuple[float, float]] = {
 }
 
 _ARCHIVE_URL: str = "https://archive-api.open-meteo.com/v1/archive"
+_FORECAST_URL: str = "https://api.open-meteo.com/v1/forecast"
 _REQUEST_TIMEOUT_SECONDS: float = 30.0
 
 # Open-Meteo variable names → our domain field names. Pinning the names
@@ -76,17 +77,43 @@ class OpenMeteoClient:
             "wind_speed_unit": "ms",
             "timezone": "UTC",
         }
-
-        try:
-            response = requests.get(_ARCHIVE_URL, params=params, timeout=_REQUEST_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            payload = response.json()
-        except Exception as exc:
-            raise DataSourceUnavailableError(
-                f"Open-Meteo query failed for {zone.value}: {exc}"
-            ) from exc
-
+        payload = _request(_ARCHIVE_URL, params, zone)
         return list(_to_readings(payload, zone=zone, start=start, end=end))
+
+    def fetch_forecast(
+        self,
+        *,
+        zone: BiddingZone,
+        start: datetime,
+        end: datetime,
+    ) -> Iterable[WeatherReading]:
+        lat, lon = _ZONE_LAT_LON[zone]
+        # The forecast endpoint accepts hour-level windows via
+        # ``start_hour`` / ``end_hour`` (ISO timestamps without the
+        # offset; we emit ``%Y-%m-%dT%H:%M`` and pin ``timezone=UTC``
+        # so they're interpreted in UTC).
+        params: dict[str, str | float] = {
+            "latitude": lat,
+            "longitude": lon,
+            "start_hour": start.strftime("%Y-%m-%dT%H:%M"),
+            "end_hour": end.strftime("%Y-%m-%dT%H:%M"),
+            "hourly": ",".join(_HOURLY_VARS),
+            "wind_speed_unit": "ms",
+            "timezone": "UTC",
+        }
+        payload = _request(_FORECAST_URL, params, zone)
+        return list(_to_readings(payload, zone=zone, start=start, end=end))
+
+
+def _request(url: str, params: dict[str, str | float], zone: BiddingZone) -> dict[str, Any]:
+    try:
+        response = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        return response.json()  # type: ignore[no-any-return]
+    except Exception as exc:
+        raise DataSourceUnavailableError(
+            f"Open-Meteo query failed for {zone.value}: {exc}"
+        ) from exc
 
 
 def _to_readings(

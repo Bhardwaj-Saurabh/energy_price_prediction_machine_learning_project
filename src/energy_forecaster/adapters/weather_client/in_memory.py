@@ -40,6 +40,24 @@ class InMemoryWeatherClient:
         start: datetime,
         end: datetime,
     ) -> Iterable[WeatherReading]:
+        return self._generate(zone=zone, start=start, end=end)
+
+    def fetch_forecast(
+        self,
+        *,
+        zone: BiddingZone,
+        start: datetime,
+        end: datetime,
+    ) -> Iterable[WeatherReading]:
+        # The synthetic generator is purely a function of the wall-clock
+        # hour-of-day; whether the timestamp is past or future is
+        # immaterial. Forwarding to the same logic is the right
+        # behaviour for a deterministic local-dev adapter.
+        return self._generate(zone=zone, start=start, end=end)
+
+    def _generate(
+        self, *, zone: BiddingZone, start: datetime, end: datetime
+    ) -> list[WeatherReading]:
         temp_baseline = _ZONE_TEMP_BASELINE_C[zone]
         readings: list[WeatherReading] = []
         cursor = _floor_to_hour(start)
