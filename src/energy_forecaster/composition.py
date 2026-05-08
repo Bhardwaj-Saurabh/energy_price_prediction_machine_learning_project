@@ -22,6 +22,7 @@ with a ``correlation_id`` — and have it flow into every use case.
 """
 
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from energy_forecaster.adapters.clock.system_clock import SystemClock
@@ -49,12 +50,14 @@ from energy_forecaster.application.use_cases.ingest_entsoe_load import (
 )
 from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.config.settings import Settings
+from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from energy_forecaster.pipelines.feature_engineering.runner import (
     run_feature_engineering,
 )
 from energy_forecaster.pipelines.inference.runner import (
     InferenceResult,
+    run_forward_inference,
     run_inference,
 )
 from energy_forecaster.pipelines.monitoring.runner import (
@@ -181,6 +184,53 @@ def build_run_inference(
             clock=clock,
             model_version=model_version,
             hours=hours,
+        )
+
+    return _run
+
+
+def build_run_forward_inference(
+    settings: Settings,
+) -> Callable[[ModelVersion, list[BiddingZone] | None, int, datetime | None], InferenceResult]:
+    """Return a partially-applied forward-inference runner.
+
+    Captures the registry, forecast + observation repos, weather
+    adapter (synthetic or Open-Meteo per ``settings.weather_source``),
+    and system clock. The caller picks the model version, an optional
+    zone subset (None = all zones), and horizon per invocation.
+    Forward inference doesn't read the feature parquet — it builds
+    rows on the fly from observations + weather forecast — so there's
+    no ``features_path`` parameter.
+    """
+    registry = MLflowModelRegistry(
+        tracking_uri=settings.mlflow_tracking_uri,
+        experiment_name="energy_forecaster",
+    )
+    forecast_repo = LocalFsLoadForecastRepository(root=settings.local_data_root)
+    observation_repo = LocalFsLoadObservationRepository(root=settings.local_data_root)
+    weather: WeatherClient
+    if settings.weather_source == "synthetic":
+        weather = InMemoryWeatherClient()
+    else:
+        weather = OpenMeteoClient()
+    clock = SystemClock()
+
+    def _run(
+        model_version: ModelVersion,
+        zones: list[BiddingZone] | None = None,
+        hours: int = 24,
+        as_of_time: datetime | None = None,
+    ) -> InferenceResult:
+        return run_forward_inference(
+            registry=registry,
+            forecast_repo=forecast_repo,
+            observation_repo=observation_repo,
+            weather=weather,
+            clock=clock,
+            model_version=model_version,
+            zones=zones if zones is not None else tuple(BiddingZone),
+            hours=hours,
+            as_of_time=as_of_time,
         )
 
     return _run

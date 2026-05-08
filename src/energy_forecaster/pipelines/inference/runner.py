@@ -157,14 +157,21 @@ def run_forward_inference(
     model_version: ModelVersion,
     zones: Iterable[BiddingZone] = tuple(BiddingZone),
     hours: int = 24,
+    as_of_time: datetime | None = None,
 ) -> InferenceResult:
     """Run forward inference and persist the resulting day-ahead forecasts.
 
-    Picks the next ``hours`` hourly delivery slots after ``clock.now()``
+    Picks the next ``hours`` hourly delivery slots after ``as_of_time``
     (floored to the hour) and produces one forecast per slot per zone.
-    All forecasts share the same ``as_of_time = clock.now()`` — the
-    moment the run was kicked off — so a downstream consumer can group
-    them as "the 12:00 forecast for tomorrow's day-ahead market".
+    All forecasts share the same ``as_of_time`` — the moment "from
+    which" we are predicting — so a downstream consumer can group them
+    as "the 12:00 forecast for tomorrow's day-ahead market".
+
+    If ``as_of_time`` is None it defaults to ``clock.now()`` floored to
+    the hour. Passing it explicitly is useful when (a) ENTSO-E's
+    publication delay means observations at wall-clock-now are missing
+    and we want to forecast from when data was last fresh, or (b)
+    backfilling historic forecasts for analysis.
 
     Per-zone flow (the heart of the function):
       1. Read observations covering the lag window (``[delivery[0] - 168h,
@@ -182,10 +189,10 @@ def run_forward_inference(
     the recursive prediction pattern. Document, accept, monitor.
     """
     started_at = clock.now()
-    as_of_time = _floor_to_hour(started_at)
+    as_of = _floor_to_hour(as_of_time if as_of_time is not None else started_at)
 
-    # Delivery hours: hour after now, hour after that, ..., for ``hours`` slots.
-    delivery_times = [as_of_time + timedelta(hours=h) for h in range(1, hours + 1)]
+    # Delivery hours: hour after as_of, hour after that, ..., for ``hours`` slots.
+    delivery_times = [as_of + timedelta(hours=h) for h in range(1, hours + 1)]
     lookback_start = delivery_times[0] - timedelta(hours=168)
 
     model = registry.load(model_version)
@@ -236,7 +243,7 @@ def run_forward_inference(
             forecasts.append(
                 LoadForecast(
                     zone=zone,
-                    as_of_time=as_of_time,
+                    as_of_time=as_of,
                     delivery_time=delivery_time,
                     predicted_load=EnergyMW(predicted),
                     model_version=model_version,

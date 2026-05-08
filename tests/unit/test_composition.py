@@ -37,6 +37,7 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
+    build_run_forward_inference,
     build_run_inference,
     build_run_monitoring,
     build_run_training,
@@ -286,6 +287,109 @@ def test_build_run_inference_wires_registry_and_repo(
     assert isinstance(captured_version, ModelVersion)
     assert captured_version.value == "demand_forecaster@v1"
     assert captured["hours"] == 12
+
+
+def test_build_run_forward_inference_returns_callable(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+    )
+    runner = build_run_forward_inference(settings)
+    assert callable(runner)
+
+
+def test_build_run_forward_inference_wires_repos_and_weather(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stub run_forward_inference at its import site in composition and
+    # capture everything the closure forwards. Confirms the registry,
+    # both repos, the weather adapter, and the clock are the expected
+    # concrete types, and that the per-call zones + hours flow through.
+    from energy_forecaster.adapters.weather_client.in_memory import (
+        InMemoryWeatherClient,
+    )
+    from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+
+    captured: dict[str, object] = {}
+
+    def _stub(
+        *,
+        registry: object,
+        forecast_repo: object,
+        observation_repo: object,
+        weather: object,
+        clock: object,
+        model_version: ModelVersion,
+        zones: object,
+        hours: int,
+        as_of_time: object,
+    ) -> object:
+        captured["registry"] = registry
+        captured["forecast_repo"] = forecast_repo
+        captured["observation_repo"] = observation_repo
+        captured["weather"] = weather
+        captured["clock"] = clock
+        captured["model_version"] = model_version
+        captured["zones"] = zones
+        captured["hours"] = hours
+        captured["as_of_time"] = as_of_time
+
+        class _StubResult:
+            forecasts_produced = 0
+            forecasts_inserted = 0
+
+        return _StubResult()
+
+    monkeypatch.setattr("energy_forecaster.composition.run_forward_inference", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+        weather_source="synthetic",
+    )
+
+    runner = build_run_forward_inference(settings)
+    runner(ModelVersion("demand_forecaster@v1"), [BiddingZone.DE_LU], 12, None)
+
+    assert isinstance(captured["registry"], MLflowModelRegistry)
+    assert isinstance(captured["forecast_repo"], LocalFsLoadForecastRepository)
+    assert isinstance(captured["observation_repo"], LocalFsLoadObservationRepository)
+    assert isinstance(captured["weather"], InMemoryWeatherClient)
+    assert isinstance(captured["clock"], SystemClock)
+    captured_version = captured["model_version"]
+    assert isinstance(captured_version, ModelVersion)
+    assert captured_version.value == "demand_forecaster@v1"
+    assert captured["zones"] == [BiddingZone.DE_LU]
+    assert captured["hours"] == 12
+
+
+def test_build_run_forward_inference_open_meteo_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Composition routes weather_source=open_meteo to the real adapter.
+    from energy_forecaster.adapters.weather_client.open_meteo import OpenMeteoClient
+
+    captured: dict[str, object] = {}
+
+    def _stub(**kwargs: object) -> object:
+        captured.update(kwargs)
+
+        class _StubResult:
+            forecasts_produced = 0
+            forecasts_inserted = 0
+
+        return _StubResult()
+
+    monkeypatch.setattr("energy_forecaster.composition.run_forward_inference", _stub)
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+        weather_source="open_meteo",
+    )
+    build_run_forward_inference(settings)(ModelVersion("demand_forecaster@v1"), None, 24, None)
+    assert isinstance(captured["weather"], OpenMeteoClient)
 
 
 def test_build_run_monitoring_returns_callable(tmp_path: Path) -> None:

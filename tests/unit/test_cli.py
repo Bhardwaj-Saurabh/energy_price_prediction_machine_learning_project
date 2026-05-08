@@ -636,6 +636,149 @@ class TestPredictSubcommand:
         assert "simulated inference failure" in capsys.readouterr().err
 
 
+class TestForecastSubcommand:
+    """End-to-end checks for ``energy-forecaster forecast`` (forward mode).
+
+    The real runner does MLflow load + recursive prediction + persists
+    via LocalFs; we monkeypatch it for hermetic CLI-level tests. The
+    integration tests in ``tests/integration/pipelines/inference/``
+    cover the real path.
+    """
+
+    def test_runs_via_fake_runner_and_returns_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+        from energy_forecaster.domain.value_objects.model_version import ModelVersion
+        from energy_forecaster.pipelines.inference.runner import InferenceResult
+
+        captured: dict[str, object] = {}
+
+        def _runner(
+            mv: ModelVersion,
+            zones: list[BiddingZone] | None,
+            hours: int,
+            as_of: datetime | None = None,
+        ) -> InferenceResult:
+            captured["model_version"] = mv
+            captured["zones"] = zones
+            captured["hours"] = hours
+            now = datetime(2026, 5, 8, 12, tzinfo=UTC)
+            return InferenceResult(
+                model_version=mv,
+                forecasts_produced=24,
+                forecasts_inserted=24,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(
+            settings: object,
+        ) -> Callable[
+            [ModelVersion, list[BiddingZone] | None, int, datetime | None], InferenceResult
+        ]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_forward_inference", _build)
+
+        exit_code = main(["forecast", "--zone", "DE_LU", "--hours", "12"])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "Forecast complete" in out
+        assert "Forecasts produced:   24" in out
+        captured_version = captured["model_version"]
+        assert isinstance(captured_version, ModelVersion)
+        assert captured_version.value == "demand_forecaster@champion"
+        captured_zones = captured["zones"]
+        assert isinstance(captured_zones, list)
+        assert captured_zones == [BiddingZone.DE_LU]
+        assert captured["hours"] == 12
+
+    def test_default_zone_is_none_meaning_all_zones(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Without --zone the runner receives None and the composition
+        # closure expands that to all supported zones at runtime.
+        from collections.abc import Callable
+        from datetime import UTC, datetime
+
+        from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+        from energy_forecaster.domain.value_objects.model_version import ModelVersion
+        from energy_forecaster.pipelines.inference.runner import InferenceResult
+
+        captured: dict[str, object] = {}
+
+        def _runner(
+            mv: ModelVersion,
+            zones: list[BiddingZone] | None,
+            hours: int,
+            as_of: datetime | None = None,
+        ) -> InferenceResult:
+            captured["zones"] = zones
+            now = datetime(2026, 5, 8, 12, tzinfo=UTC)
+            return InferenceResult(
+                model_version=mv,
+                forecasts_produced=0,
+                forecasts_inserted=0,
+                started_at=now,
+                finished_at=now,
+            )
+
+        def _build(
+            settings: object,
+        ) -> Callable[
+            [ModelVersion, list[BiddingZone] | None, int, datetime | None], InferenceResult
+        ]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_forward_inference", _build)
+
+        main(["forecast"])
+
+        assert captured["zones"] is None
+
+    def test_runner_failure_returns_exit_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from collections.abc import Callable
+        from datetime import datetime
+
+        from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
+        from energy_forecaster.domain.value_objects.model_version import ModelVersion
+        from energy_forecaster.pipelines.inference.runner import InferenceResult
+
+        def _runner(
+            mv: ModelVersion,
+            zones: list[BiddingZone] | None,
+            hours: int,
+            as_of: datetime | None = None,
+        ) -> InferenceResult:
+            raise RuntimeError("simulated forward failure")
+
+        def _build(
+            settings: object,
+        ) -> Callable[
+            [ModelVersion, list[BiddingZone] | None, int, datetime | None], InferenceResult
+        ]:
+            return _runner
+
+        monkeypatch.setattr("energy_forecaster.cli.build_run_forward_inference", _build)
+
+        exit_code = main(["forecast"])
+
+        assert exit_code == 1
+        assert "simulated forward failure" in capsys.readouterr().err
+
+
 class TestMonitorSubcommand:
     """End-to-end checks for ``energy-forecaster monitor``.
 

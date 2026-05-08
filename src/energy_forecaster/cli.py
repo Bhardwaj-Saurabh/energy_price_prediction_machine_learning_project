@@ -36,6 +36,7 @@ from energy_forecaster.composition import (
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
+    build_run_forward_inference,
     build_run_inference,
     build_run_monitoring,
     build_run_training,
@@ -72,6 +73,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_train(args, settings=settings, logger=logger)
     if args.command == "predict":
         return _run_predict(args, settings=settings, logger=logger)
+    if args.command == "forecast":
+        return _run_forecast(args, settings=settings, logger=logger)
     if args.command == "monitor":
         return _run_monitor(args, settings=settings, logger=logger)
     if args.command == "serve":
@@ -184,6 +187,54 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=24,
         help="How many of the most recent hours to predict per zone (default 24).",
+    )
+
+    forecast = subparsers.add_parser(
+        "forecast",
+        help="Forward inference: predict the next N hours from now.",
+        description=(
+            "Day-ahead-style serving. Predicts the next ``--hours`` "
+            "delivery slots from clock.now() (floored to the hour), "
+            "all forecasts sharing the same as_of_time. Builds feature "
+            "rows from recent observations + a fetched weather forecast "
+            "and applies recursive lag_1h filling — see the runner for "
+            "the prediction-error compounding caveat."
+        ),
+    )
+    forecast.add_argument(
+        "--model",
+        type=str,
+        default="demand_forecaster@champion",
+        help=(
+            "Model version to load. Same accepted forms as ``predict``: "
+            "alias ('demand_forecaster@champion') or run-id "
+            "('demand_forecaster@<run_id>')."
+        ),
+    )
+    forecast.add_argument(
+        "--zone",
+        action="append",
+        default=None,
+        choices=[z.value for z in BiddingZone],
+        help=("Bidding zone to forecast (repeatable). Defaults to all supported zones."),
+    )
+    forecast.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Forecast horizon in hours (default 24, day-ahead window).",
+    )
+    forecast.add_argument(
+        "--as-of",
+        type=_parse_timestamp,
+        default=None,
+        help=(
+            "Override the 'as-of' time used as the base for delivery "
+            "slots. Defaults to clock.now() floored to the hour. Useful "
+            "when ENTSO-E data lags wall-clock time, or for backfilling "
+            "historic forecasts. Same format rules as --start in "
+            "ingest: full ISO timestamp with offset, or bare date."
+        ),
     )
 
     monitor = subparsers.add_parser(
@@ -465,6 +516,50 @@ def _run_predict(args: argparse.Namespace, *, settings: Settings, logger: Logger
 
 def _print_inference_result(result: InferenceResult) -> None:
     print("Inference complete:")
+    print(f"  Model version:        {result.model_version.value}")
+    print(f"  Forecasts produced:   {result.forecasts_produced}")
+    print(f"  Forecasts inserted:   {result.forecasts_inserted}")
+    print(f"  Started at:           {result.started_at.isoformat()}")
+    print(f"  Finished at:          {result.finished_at.isoformat()}")
+    print(f"  Duration:             {result.duration_seconds:.3f} s")
+
+
+def _run_forecast(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    runner = build_run_forward_inference(settings)
+    log = logger.bind(operation="forecast")
+    model_version = ModelVersion(args.model)
+    zones = [BiddingZone(z) for z in args.zone] if args.zone else None
+    log.info(
+        "forecast.start",
+        model_version=model_version.value,
+        hours=args.hours,
+        zones=[z.value for z in zones] if zones else "all",
+        as_of=args.as_of.isoformat() if args.as_of else "clock",
+    )
+
+    try:
+        result = runner(model_version, zones, args.hours, args.as_of)
+    except Exception as exc:
+        # Same boundary-catch policy as predict: pyarrow / MLflow /
+        # weather-client / filesystem errors become a clean exit-1 with
+        # a logged error type rather than crashing the CLI.
+        log.error("forecast.failed", error=str(exc), error_type=type(exc).__name__)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    log.info(
+        "forecast.done",
+        model_version=result.model_version.value,
+        forecasts_produced=result.forecasts_produced,
+        forecasts_inserted=result.forecasts_inserted,
+        duration_seconds=round(result.duration_seconds, 3),
+    )
+    _print_forecast_result(result)
+    return 0
+
+
+def _print_forecast_result(result: InferenceResult) -> None:
+    print("Forecast complete:")
     print(f"  Model version:        {result.model_version.value}")
     print(f"  Forecasts produced:   {result.forecasts_produced}")
     print(f"  Forecasts inserted:   {result.forecasts_inserted}")
