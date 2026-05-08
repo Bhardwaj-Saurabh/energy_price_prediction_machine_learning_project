@@ -307,3 +307,18 @@ class FakeLoadForecastRepository:
 
     def all(self) -> list[LoadForecast]:
         return list(self._store.values())
+
+    def find_by_zone(
+        self,
+        zone: BiddingZone,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[LoadForecast]:
+        matching = [f for f in self._store.values() if f.zone == zone]
+        if since is not None:
+            matching = [f for f in matching if f.delivery_time >= since]
+        if until is not None:
+            matching = [f for f in matching if f.delivery_time < until]
+        matching.sort(key=lambda f: f.delivery_time)
+        return matching

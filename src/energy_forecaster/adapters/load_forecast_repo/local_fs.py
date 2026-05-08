@@ -46,6 +46,25 @@ class LocalFsLoadForecastRepository:
             total_new += len(new)
         return total_new
 
+    def find_by_zone(
+        self,
+        zone: BiddingZone,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[LoadForecast]:
+        path = self._file_for(zone)
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8") as f:
+            forecasts = [deserialise(line) for line in f if line.strip()]
+        if since is not None:
+            forecasts = [f for f in forecasts if f.delivery_time >= since]
+        if until is not None:
+            forecasts = [f for f in forecasts if f.delivery_time < until]
+        forecasts.sort(key=lambda f: f.delivery_time)
+        return forecasts
+
     def _file_for(self, zone: BiddingZone) -> Path:
         return self._dir / f"{zone.value}.jsonl"
 

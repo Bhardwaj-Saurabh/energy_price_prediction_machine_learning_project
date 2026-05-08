@@ -32,6 +32,7 @@ from energy_forecaster.application.use_cases.ingest_weather import (
     IngestWeatherResult,
 )
 from energy_forecaster.composition import (
+    build_app,
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
@@ -69,6 +70,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_train(args, settings=settings, logger=logger)
     if args.command == "predict":
         return _run_predict(args, settings=settings, logger=logger)
+    if args.command == "serve":
+        return _run_serve(args, settings=settings, logger=logger)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -177,6 +180,29 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=24,
         help="How many of the most recent hours to predict per zone (default 24).",
+    )
+
+    serve = subparsers.add_parser(
+        "serve",
+        help="Start the FastAPI HTTP server.",
+        description=(
+            "Run the FastAPI app under uvicorn. Exposes /health, "
+            "/forecast/{zone}, and POST /predict. The server is wired "
+            "via the composition root, so it uses the same adapters as "
+            "the rest of the CLI."
+        ),
+    )
+    serve.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address. Defaults to 127.0.0.1 (loopback only).",
+    )
+    serve.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="TCP port. Defaults to 8000.",
     )
 
     return parser
@@ -413,3 +439,20 @@ def _print_inference_result(result: InferenceResult) -> None:
     print(f"  Started at:           {result.started_at.isoformat()}")
     print(f"  Finished at:          {result.finished_at.isoformat()}")
     print(f"  Duration:             {result.duration_seconds:.3f} s")
+
+
+def _run_serve(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    # uvicorn runs until SIGINT/SIGTERM; the call only returns once the
+    # server has shut down cleanly. Returning 0 signals a clean stop.
+    import uvicorn
+    from fastapi import FastAPI
+
+    log = logger.bind(operation="serve", host=args.host, port=args.port)
+    log.info("serve.start")
+    # build_app advertises ``object`` to keep FastAPI out of composition's
+    # public type surface; narrow it back here so uvicorn is happy.
+    app = build_app(settings, logger=logger)
+    assert isinstance(app, FastAPI)
+    uvicorn.run(app, host=args.host, port=args.port, log_config=None)
+    log.info("serve.stopped")
+    return 0

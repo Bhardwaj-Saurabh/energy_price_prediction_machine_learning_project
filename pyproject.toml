@@ -54,6 +54,14 @@ dependencies = [
     # mlflow — experiment tracking and model registry. Confined to the
     # MLflowModelRegistry adapter; nothing else imports mlflow.
     "mlflow>=2.18.0",
+    # fastapi — HTTP serving framework. Lives in the same architectural
+    # slot as the CLI (a "framework") and reuses the same composition
+    # root and ports.
+    "fastapi>=0.115.0",
+    # uvicorn — ASGI server that runs the FastAPI app in production and
+    # development alike. ``[standard]`` brings httptools + websockets
+    # for performance + protocol support.
+    "uvicorn[standard]>=0.32.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -74,6 +82,8 @@ dev = [
     # Type stubs for ``requests`` — published as a separate distribution
     # by the typeshed maintainers since requests doesn't ship inline.
     "types-requests>=2.32.0",
+    # httpx — used by FastAPI's TestClient under the hood. Dev-only.
+    "httpx>=0.27.0",
 ]
 
 [build-system]

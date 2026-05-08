@@ -61,6 +61,7 @@ from energy_forecaster.pipelines.training.runner import (
     TrainingResult,
     run_training,
 )
+from energy_forecaster.serving.app import create_app as _serving_create_app
 
 
 def build_ingest_entsoe_load(settings: Settings, *, logger: Logger) -> IngestEntsoeLoad:
@@ -179,3 +180,22 @@ def build_run_inference(
         )
 
     return _run
+
+
+def build_app(settings: Settings, *, logger: Logger) -> object:
+    """Wire the FastAPI application for the given environment.
+
+    Returns ``object`` (rather than ``FastAPI``) because keeping the
+    framework type out of the composition root's public typing surface
+    means callers don't have to import FastAPI themselves. Callers treat
+    the return value as opaque and hand it to :func:`uvicorn.run` (or
+    pass it to FastAPI's TestClient in tests).
+    """
+    forecast_repo = LocalFsLoadForecastRepository(root=settings.local_data_root)
+    inference_runner = build_run_inference(settings)
+    return _serving_create_app(
+        settings,
+        logger=logger,
+        forecast_repo=forecast_repo,
+        inference_runner=inference_runner,
+    )
