@@ -65,6 +65,25 @@ class LocalFsLoadObservationRepository:
 
         return total_new
 
+    def find_by_zone(
+        self,
+        zone: BiddingZone,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[LoadObservation]:
+        path = self._file_for(zone)
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8") as f:
+            observations = [deserialise(line) for line in f if line.strip()]
+        if since is not None:
+            observations = [o for o in observations if o.timestamp_utc >= since]
+        if until is not None:
+            observations = [o for o in observations if o.timestamp_utc < until]
+        observations.sort(key=lambda o: o.timestamp_utc)
+        return observations
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

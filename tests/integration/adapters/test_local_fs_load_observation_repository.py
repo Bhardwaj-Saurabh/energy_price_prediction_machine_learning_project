@@ -148,3 +148,62 @@ class TestDeduplication:
 
         assert inserted == 2
         assert len(_read_file(tmp_path / "load_observations" / "DE_LU.jsonl")) == 5
+
+
+class TestFindByZone:
+    def test_returns_empty_list_when_zone_file_missing(self, tmp_path: Path) -> None:
+        repo = LocalFsLoadObservationRepository(root=tmp_path)
+        assert repo.find_by_zone(BiddingZone.FR) == []
+
+    def test_returns_all_observations_in_timestamp_order(self, tmp_path: Path) -> None:
+        repo = LocalFsLoadObservationRepository(root=tmp_path)
+        observations = _hourly_load(BiddingZone.DE_LU, _utc(2026, 5, 4), 5)
+        # Insert in reverse to confirm the returned order is by timestamp,
+        # not by file order.
+        repo.add_many(reversed(observations))
+
+        result = repo.find_by_zone(BiddingZone.DE_LU)
+
+        assert result == observations
+        assert [o.timestamp_utc for o in result] == sorted(o.timestamp_utc for o in result)
+
+    def test_filters_by_since_inclusive(self, tmp_path: Path) -> None:
+        repo = LocalFsLoadObservationRepository(root=tmp_path)
+        repo.add_many(_hourly_load(BiddingZone.DE_LU, _utc(2026, 5, 4), 5))
+
+        result = repo.find_by_zone(BiddingZone.DE_LU, since=_utc(2026, 5, 4, 2))
+
+        assert [o.timestamp_utc.hour for o in result] == [2, 3, 4]
+
+    def test_filters_by_until_exclusive(self, tmp_path: Path) -> None:
+        repo = LocalFsLoadObservationRepository(root=tmp_path)
+        repo.add_many(_hourly_load(BiddingZone.DE_LU, _utc(2026, 5, 4), 5))
+
+        result = repo.find_by_zone(BiddingZone.DE_LU, until=_utc(2026, 5, 4, 3))
+
+        assert [o.timestamp_utc.hour for o in result] == [0, 1, 2]
+
+    def test_filters_by_both_bounds(self, tmp_path: Path) -> None:
+        repo = LocalFsLoadObservationRepository(root=tmp_path)
+        repo.add_many(_hourly_load(BiddingZone.DE_LU, _utc(2026, 5, 4), 5))
+
+        result = repo.find_by_zone(
+            BiddingZone.DE_LU,
+            since=_utc(2026, 5, 4, 1),
+            until=_utc(2026, 5, 4, 4),
+        )
+
+        assert [o.timestamp_utc.hour for o in result] == [1, 2, 3]
+
+    def test_returns_only_the_requested_zone(self, tmp_path: Path) -> None:
+        repo = LocalFsLoadObservationRepository(root=tmp_path)
+        repo.add_many(_hourly_load(BiddingZone.DE_LU, _utc(2026, 5, 4), 2))
+        repo.add_many(_hourly_load(BiddingZone.FR, _utc(2026, 5, 4), 3))
+
+        de = repo.find_by_zone(BiddingZone.DE_LU)
+        fr = repo.find_by_zone(BiddingZone.FR)
+
+        assert len(de) == 2
+        assert len(fr) == 3
+        assert all(o.zone == BiddingZone.DE_LU for o in de)
+        assert all(o.zone == BiddingZone.FR for o in fr)

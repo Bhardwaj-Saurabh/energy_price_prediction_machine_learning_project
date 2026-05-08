@@ -97,6 +97,21 @@ class FakeLoadObservationRepository:
         """Test-only helper: dump every stored observation for assertions."""
         return list(self._store.values())
 
+    def find_by_zone(
+        self,
+        zone: BiddingZone,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[LoadObservation]:
+        matching = [o for o in self._store.values() if o.zone == zone]
+        if since is not None:
+            matching = [o for o in matching if o.timestamp_utc >= since]
+        if until is not None:
+            matching = [o for o in matching if o.timestamp_utc < until]
+        matching.sort(key=lambda o: o.timestamp_utc)
+        return matching
+
 
 class FakeWeatherClient:
     """Predetermined-data weather stand-in.
