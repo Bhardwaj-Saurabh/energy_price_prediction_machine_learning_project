@@ -62,6 +62,13 @@ dependencies = [
     # development alike. ``[standard]`` brings httptools + websockets
     # for performance + protocol support.
     "uvicorn[standard]>=0.32.0",
+    # dash + plotly — analytical web app framework for the dashboard.
+    # Same architectural slot as FastAPI: a *framework* that wires
+    # itself to ports via the composition root. Dash bundles plotly as
+    # a transitive dep; we pin it explicitly so chart code can import
+    # ``plotly.graph_objects`` without depending on Dash's pin moving.
+    "dash>=2.18.0",
+    "plotly>=5.24.0",
 ]
 
 # Console scripts installed into the venv's bin/ on `uv sync`. Maps to the
@@ -156,6 +163,10 @@ module = [
     "lightgbm.*",
     "mlflow",
     "mlflow.*",
+    "dash",
+    "dash.*",
+    "plotly",
+    "plotly.*",
 ]
 ignore_missing_imports = true
 

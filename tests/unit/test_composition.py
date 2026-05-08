@@ -34,6 +34,7 @@ from energy_forecaster.application.use_cases.ingest_entsoe_load import (
 )
 from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.composition import (
+    build_dashboard,
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
@@ -443,3 +444,18 @@ def test_build_run_monitoring_wires_repos_and_clock(
     assert isinstance(captured["clock"], SystemClock)
     assert captured["features_path"] == tmp_path / "features.parquet"
     assert captured["recent_hours"] == 72
+
+
+def test_build_dashboard_returns_a_dash_app(tmp_path: Path) -> None:
+    # The dashboard factory wires the dashboard create_app with LocalFs
+    # repos + the system clock. Returning a Dash instance proves the
+    # full chain assembles without exception.
+    from dash import Dash
+
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_data_root=tmp_path,
+        mlflow_tracking_uri=f"file:{tmp_path / 'mlruns'}",
+    )
+    app = build_dashboard(settings, logger=FakeLogger())
+    assert isinstance(app, Dash)

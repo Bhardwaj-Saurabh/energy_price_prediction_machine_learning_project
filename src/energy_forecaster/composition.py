@@ -50,6 +50,7 @@ from energy_forecaster.application.use_cases.ingest_entsoe_load import (
 )
 from energy_forecaster.application.use_cases.ingest_weather import IngestWeather
 from energy_forecaster.config.settings import Settings
+from energy_forecaster.dashboard.app import create_app as _dashboard_create_app
 from energy_forecaster.domain.value_objects.bidding_zone import BiddingZone
 from energy_forecaster.domain.value_objects.model_version import ModelVersion
 from energy_forecaster.pipelines.feature_engineering.runner import (
@@ -282,4 +283,37 @@ def build_app(settings: Settings, *, logger: Logger) -> object:
         logger=logger,
         forecast_repo=forecast_repo,
         inference_runner=inference_runner,
+    )
+
+
+def build_dashboard(settings: Settings, *, logger: Logger) -> object:
+    """Wire the Dash dashboard for the given environment.
+
+    Returns ``object`` (rather than ``dash.Dash``) for the same reason
+    :func:`build_app` returns ``object`` for FastAPI: keep framework
+    types out of the composition root's public surface. Callers run
+    the returned app via ``app.run(host=..., port=...)`` (Dash's own
+    method, no separate server needed).
+
+    The monitoring closure passed to the dashboard captures defaults
+    (features path, recent_hours=168) so the dashboard's drift card
+    has a no-arg trigger. Per-call overrides aren't surfaced in the
+    dashboard yet — they'd come in via additional dropdowns when we
+    care to expose them.
+    """
+    forecast_repo = LocalFsLoadForecastRepository(root=settings.local_data_root)
+    observation_repo = LocalFsLoadObservationRepository(root=settings.local_data_root)
+    clock = SystemClock()
+    monitoring_run = build_run_monitoring(settings)
+
+    def _monitoring_runner() -> MonitoringResult:
+        return monitoring_run(None, 168)
+
+    return _dashboard_create_app(
+        settings,
+        logger=logger,
+        forecast_repo=forecast_repo,
+        observation_repo=observation_repo,
+        monitoring_runner=_monitoring_runner,
+        clock=clock,
     )

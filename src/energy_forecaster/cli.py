@@ -33,6 +33,7 @@ from energy_forecaster.application.use_cases.ingest_weather import (
 )
 from energy_forecaster.composition import (
     build_app,
+    build_dashboard,
     build_ingest_entsoe_load,
     build_ingest_weather,
     build_run_feature_engineering,
@@ -79,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_monitor(args, settings=settings, logger=logger)
     if args.command == "serve":
         return _run_serve(args, settings=settings, logger=logger)
+    if args.command == "dashboard":
+        return _run_dashboard(args, settings=settings, logger=logger)
 
     # argparse's `required=True` on the subparsers above exits with code 2
     # before reaching this point. The guard catches the case where a future
@@ -286,6 +289,29 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8000,
         help="TCP port. Defaults to 8000.",
+    )
+
+    dashboard = subparsers.add_parser(
+        "dashboard",
+        help="Start the Dash dashboard.",
+        description=(
+            "Run the Dash analytical dashboard. Reads forecasts and "
+            "observations from the configured LocalFs adapters and "
+            "calls the monitoring runner for the drift card. Same "
+            "composition root as the rest of the CLI; same data."
+        ),
+    )
+    dashboard.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address. Defaults to 127.0.0.1 (loopback only).",
+    )
+    dashboard.add_argument(
+        "--port",
+        type=int,
+        default=8050,
+        help="TCP port. Defaults to 8050 (Dash convention).",
     )
 
     return parser
@@ -640,4 +666,18 @@ def _run_serve(args: argparse.Namespace, *, settings: Settings, logger: Logger) 
     assert isinstance(app, FastAPI)
     uvicorn.run(app, host=args.host, port=args.port, log_config=None)
     log.info("serve.stopped")
+    return 0
+
+
+def _run_dashboard(args: argparse.Namespace, *, settings: Settings, logger: Logger) -> int:
+    # Dash's app exposes its own ``run`` method (Flask under the hood);
+    # we don't need a separate ASGI server. Blocks until SIGINT.
+    from dash import Dash
+
+    log = logger.bind(operation="dashboard", host=args.host, port=args.port)
+    log.info("dashboard.start")
+    app = build_dashboard(settings, logger=logger)
+    assert isinstance(app, Dash)
+    app.run(host=args.host, port=args.port, debug=False)
+    log.info("dashboard.stopped")
     return 0

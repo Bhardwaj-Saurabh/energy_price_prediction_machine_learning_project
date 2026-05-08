@@ -939,6 +939,35 @@ class TestMonitorSubcommand:
         assert "<not enough history to compute>" in out
 
 
+class TestDashboardSubcommand:
+    """End-to-end check for ``energy-forecaster dashboard``.
+
+    Real Dash.run() blocks on a Flask server; we monkeypatch it so the
+    handler returns cleanly. The actual app construction goes through
+    the real composition root + dashboard create_app — that exercises
+    the full wiring without binding a port.
+    """
+
+    def test_runs_and_returns_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run(self: object, **kwargs: object) -> None:
+            captured["host"] = kwargs.get("host")
+            captured["port"] = kwargs.get("port")
+
+        monkeypatch.setattr("dash.Dash.run", _fake_run)
+
+        exit_code = main(["dashboard", "--host", "127.0.0.1", "--port", "8055"])
+
+        assert exit_code == 0
+        assert captured["host"] == "127.0.0.1"
+        assert captured["port"] == 8055
+
+
 class TestTimestampParsing:
     def test_full_iso_with_offset_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
         exit_code = main(
