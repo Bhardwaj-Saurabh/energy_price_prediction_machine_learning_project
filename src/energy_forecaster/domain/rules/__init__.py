@@ -11,5 +11,16 @@ from energy_forecaster.domain.rules.promotion import (
     PROMOTION_MAPE_DELTA,
     should_promote,
 )
+from energy_forecaster.domain.rules.retrain import (
+    RETRAIN_MAPE_THRESHOLD,
+    RETRAIN_PSI_THRESHOLD,
+    should_retrain,
+)
 
-__all__ = ["PROMOTION_MAPE_DELTA", "should_promote"]
+__all__ = [
+    "PROMOTION_MAPE_DELTA",
+    "RETRAIN_MAPE_THRESHOLD",
+    "RETRAIN_PSI_THRESHOLD",
+    "should_promote",
+    "should_retrain",
+]
